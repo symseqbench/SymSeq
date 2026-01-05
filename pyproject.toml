@@ -1,0 +1,95 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "symseq"
+version = "0.1.0"
+description = "Python library for defining, generating, and analyzing symbolic sequences"
+readme = "README.md"
+authors = [
+  {name = "Renato Duarte", email = "rcfduarte@gmail.com"},
+  {name = "Barna Zajzon", email = "barna.zajzon@gmail.com"},
+]
+maintainers = [
+  {name = "Renato Duarte", email = "rcfduarte@gmail.com"},
+  {name = "Barna Zajzon", email = "barna.zajzon@gmail.com"},
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Operating System :: OS Independent",
+    "Topic :: Scientific/Engineering",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+license = {text = "MIT license"}
+requires-python = ">=3.10"
+dependencies = [
+  "numpy",
+  "pandas",
+  "scikit-learn",
+  "matplotlib",
+  "more-itertools",
+  "networkx",
+  "nltk",
+  "scikit-learn",
+  "scipy",
+  "seaborn",
+  "tqdm",
+  "typer",
+  "pytest>=8.3.5",
+  "ipython>=8.37.0",
+  "optuna>=4.3.0",
+  "optuna-dashboard>=0.18.0",
+  "plotly>=6.1.2",
+  "ipykernel>=6.29.5",
+  "toml>=0.10.2",
+  "antropy>=0.1.9",
+  "pandas-stubs==2.3.2.250926",
+]
+
+[project.optional-dependencies]
+dev = [
+    "coverage",  # testing
+    "mypy",  # linting
+    "pytest",  # testing
+    "ruff"  # linting
+]
+
+[project.urls]
+
+bugs = "https://github.com:symseqbench/symseq/issues"
+changelog = "https://github.com:symseqbench/symseq/blob/master/changelog.md"
+homepage = "https://github.com:symseqbench/symseq"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.package-data]
+"*" = ["*.*"]
+
+
+
+
+# Mypy
+# ----
+
+[tool.mypy]
+files = "."
+
+# Use strict defaults
+strict = true
+warn_unreachable = true
+warn_no_return = true
+
+[[tool.mypy.overrides]]
+# Don't require test functions to include types
+module = "tests.*"
+allow_untyped_defs = true
+disable_error_code = "attr-defined"
+
