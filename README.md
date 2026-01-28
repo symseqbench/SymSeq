@@ -2,8 +2,9 @@
 
 [![Python](https://img.shields.io/badge/Python-3.10%2B-blue)](https://www.python.org/downloads/)
 [![License](https://img.shields.io/badge/License-MIT-green)](LICENSE)
-[![Build Status](https://img.shields.io/travis/zbarni/symseq.svg)](https://travis-ci.com/zbarni/symseq)
+[![Tests](https://github.com/symseqbench/SymSeq/actions/workflows/tests.yml/badge.svg)](https://github.com/symseqbench/SymSeq/actions/workflows/tests.yml)
 [![Documentation](https://img.shields.io/badge/docs-latest-brightgreen)](https://symseq.readthedocs.io)
+[![Preprint](https://badges.ws/badge/Preprint-10.48550%2FarXiv.2512.24977-B31B1B)](https://doi.org/10.48550/arXiv.2512.24977)
 
 <!-- [![PyPI version](https://img.shields.io/badge/PyPI-v0.1.0-blue)](https://pypi.org/project/neurolytics/) -->
 
