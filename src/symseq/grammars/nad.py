@@ -37,13 +37,13 @@ class NonAdjacentDependencies(SymbolicSequencer):
     def __init__(
         self,
         label: str = "Default_NAD",
-        vocabulary_size: int = 1,
-        filler_variability: int = 1,
-        dependent_elements: list[tuple[str, str]] | None = None,
+        n_deps: int | None = 1,
+        n_unique_fillers: int | None = 1,
+        dependency_pairs: list[tuple[str, str]] | None = None,
         fillers: list[str] | None = None,
-        # dependency_length: int,
         eos: str = "#",
         rng: np.random.Generator | None = None,
+        seed: int | None = None,
         verbose: bool = True,
     ):
         """
@@ -51,11 +51,13 @@ class NonAdjacentDependencies(SymbolicSequencer):
 
         Parameters
         ----------
-        vocabulary_size : int
-            Number of unique "words" or "frames". Each new frame is a novel dependency.
-        filler_variability : int
-            Size of the filler set.
-        dependent_elements : list of tuples, optional
+        label : str
+            Grammar label.
+        n_deps : int
+            Number of unique "words" or "frames" (A-B pairs). Each new frame is a novel dependency.
+        n_unique_fillers : int
+            Number of unique filler symbols.
+        dependency_pairs : list of tuples, optional
             List of tuples containing the dependent element pairs with the structure (A1, B1). If None, the default
             is to generate the pairs based on the vocabulary size using pairs of the form (A1, B1).
         fillers : list of str, optional
@@ -74,36 +76,39 @@ class NonAdjacentDependencies(SymbolicSequencer):
         self.label = label
 
         if rng is None:
-            self.rng = np.random.default_rng()
-            logger.warning("NonAdjacentDependencies sequences will not be reproducible!")
+            self.rng = np.random.default_rng(seed)
+            if seed is None:
+                logger.warning("NonAdjacentDependencies sequences will not be reproducible!")
         else:
             self.rng = rng
 
         # parse fillers
         if fillers is None:
-            self.fillers = [f"X{i}" for i in range(filler_variability)]
-            self.filler_variability = filler_variability
+            self.fillers = [f"X{i}" for i in range(n_unique_fillers)]
+            self.n_unique_fillers = n_unique_fillers
         else:
             self.fillers = fillers
-            self.filler_variability = len(np.unique(np.array(self.fillers)))
-            logger.info(f"Updated filler variability to {self.filler_variability} based on provided fillers {fillers}.")
-            assert len(self.fillers) == self.filler_variability, "Provided fillers must be unique."
+            self.n_unique_fillers = len(np.unique(np.array(self.fillers)))
+            logger.info(f"Updated filler variability to {self.n_unique_fillers} based on provided fillers {fillers}.")
+            assert len(self.fillers) == self.n_unique_fillers, "Provided fillers must be unique."
 
         # parse dependent elements
         # TODO include more detailed checks
-        if dependent_elements is None:
-            self.dependent_elements = [(f"A{i}", f"B{i}") for i in range(vocabulary_size)]
-            self.vocabulary_size = vocabulary_size
+        if dependency_pairs is None:
+            self.dependency_pairs = [(f"A{i}", f"B{i}") for i in range(n_deps)]
+            self.n_deps = n_deps
         else:
-            self.dependent_elements = dependent_elements
-            self.vocabulary_size = len(np.unique(np.array(dependent_elements)))
-            logger.info(f"Updated vocabulary size to {self.vocabulary_size} based on provided dependent elements.")
-            assert len(self.dependent_elements) == self.vocabulary_size, "Provided dependent elements must be unique."
+            self.dependency_pairs = dependency_pairs
+            self.n_deps = len(set(dependency_pairs))
+            logger.info(f"Updated vocabulary size to {self.n_deps} based on provided dependent elements.")
+            assert len(self.dependency_pairs) == self.n_deps, "Provided dependent elements must be unique."
 
+        self.vocabulary = self.generate_vocabulary(verbose=False)
+        self.vocabulary_size = len(self.vocabulary)
         # TODO expected behavior for accepted patterns?
         # self.accepted_patterns = [f"A{i}B{i}" for i in range(vocabulary_size)]
 
-        all_symbols = list(collapse(self.dependent_elements + self.fillers))  # flatten list
+        all_symbols = list(collapse(self.dependency_pairs + self.fillers))  # flatten list
         unique_symbols = list(np.unique(all_symbols))  # alphabet
 
         super().__init__(
@@ -113,8 +118,9 @@ class NonAdjacentDependencies(SymbolicSequencer):
             rng=self.rng,
         )
 
-        self.start_symbols = [d[0] for d in self.dependent_elements]
-        self.terminal_symbols = [d[1] for d in self.dependent_elements]
+        self.start_symbols = [d[0] for d in self.dependency_pairs]
+        self.terminal_symbols = [d[1] for d in self.dependency_pairs]
+        self.eos = eos
 
         if verbose:
             self.print()
@@ -132,7 +138,7 @@ class NonAdjacentDependencies(SymbolicSequencer):
 
     # TODO consider adding generators
     def generate_string(
-        self, n_fillers: int = 1, randomize_fillers: bool = False, generator: bool = False
+        self, filler_len: int = 1, randomize_fillers: bool = False, generator: bool = False
     ) -> list[str]:
         """
         Generate an individual string, 'word' or frame.
@@ -160,13 +166,13 @@ class NonAdjacentDependencies(SymbolicSequencer):
         ['A1', 'X1', 'X0', 'B1']
         """
         # select a random dependent element pair
-        d1, d2 = self.dependent_elements[self.rng.integers(self.vocabulary_size)]
+        d1, d2 = self.dependency_pairs[self.rng.integers(self.n_deps)]
 
         if len(self.fillers) > 0:
             if randomize_fillers:
-                fillers = self.rng.choice(np.array(self.fillers, dtype=object), n_fillers, replace=True).tolist()
+                fillers = self.rng.choice(np.array(self.fillers, dtype=object), filler_len, replace=True).tolist()
             else:
-                fillers = n_fillers * [self.rng.choice(np.array(self.fillers, dtype=object))]  # choose one randomly
+                fillers = filler_len * [self.rng.choice(np.array(self.fillers, dtype=object))]  # choose one randomly
             string = [d1] + fillers + [d2]
         else:
             logger.warning("No fillers provided, using only the dependent element.")
@@ -178,7 +184,7 @@ class NonAdjacentDependencies(SymbolicSequencer):
             return list(collapse(string))
 
     # TODO rename function
-    def generate_vocabulary(self, n_fillers: int = 1, generator: bool = False):
+    def generate_vocabulary(self, filler_len: int | None = None, generator: bool = False, verbose: bool = True):
         """
         Generate the complete string set (all frames/words) for the provided set of dependent elements with `n_fillers`
         fillers. This can only be performed for non-randomized fillers.
@@ -186,7 +192,8 @@ class NonAdjacentDependencies(SymbolicSequencer):
         Parameters
         ----------
         n_fillers : int, optional
-            Number of fillers elements (dependency length) in the string. Default is 1.
+            Number of fillers elements (dependency length) in the string. If None, the internal `self.n_fillers` is
+            used. Default is None.
         generator : bool, optional
             Retrieve the strings as generators (True) or lists (False). Default is False.
 
@@ -196,16 +203,22 @@ class NonAdjacentDependencies(SymbolicSequencer):
             The generated string set as a list of lists of symbols.
 
         """
-        logger.info(f"Generating the complete set of words/frames, according to {self.label} rules...")
+        if verbose:
+            logger.info(f"Generating the complete set of words/frames, according to {self.label} rules...")
+
+        if filler_len is None:
+            filler_len = self.n_unique_fillers
+
         string_set = []
 
-        for d1, d2 in self.dependent_elements:
+        for d1, d2 in self.dependency_pairs:
             if len(self.fillers) > 0:
                 for filler in self.fillers:
-                    string = [d1] + n_fillers * [filler] + [d2]
+                    string = [d1] + filler_len * [filler] + [d2]
                     string_set.append(string)
             else:
-                logger.warning("No fillers provided, using only the dependent element.")
+                if verbose:
+                    logger.warning("No fillers provided, using only the dependent element.")
                 string = [d1, d2]
                 string_set.append(string)
 
@@ -216,49 +229,81 @@ class NonAdjacentDependencies(SymbolicSequencer):
 
     # TODO consider adding option for introducing violations/deviants
     def generate_string_set(
-        self, set_length: int, n_fillers: int = 1, randomize_fillers: bool = False, frac_violations: float = 0.0
+        self,
+        n_samples: int,
+        filler_len: int | None = None,
+        randomize_fillers: bool = False,
+        frac_violations: float = 0.0,
+        replace: bool = True,
+        strict: bool = True,
+        **kwargs,
     ):
         """
-        Generate a string set of specified length for the experiment. This can only be performed for non-randomized
-        fillers. Note that strings may be repeated in the set.
+        Generate a string set of specified length for the experiment.
 
         Parameters
         ----------
-        set_length : int
+        n_samples : int
             Total number of strings to generate.
-        n_fillers : int, optional
+        filler_len : int, optional
             Number of fillers elements (dependency length) in the string. Default is 1.
         randomize_fillers : bool, optional
             Whether to randomize the fillers if multiple present (e.g., A1 X1 X2 B1). Default is False.
         frac_violations : float, optional
             Introduce syntactic violations in this number of strings in the set.
+        replace: bool
+            Allow repetitions of the same string(s) in the generated set.
+        strict: bool
+            If True, raise an error when the vocabulary (unique strings) is exhausted and could not generate
+            `n_samples` strings. If False, return all possible strings with warning.
 
         Returns
         -------
         string_set : list of list of str
             The generated string set as a list of lists of symbols.
         """
-        assert n_fillers <= self.filler_variability, "Provided n_fillers must be less than or equal to the maximum."
+        if frac_violations > 0:
+            raise NotImplementedError("This function is not implemented yet.")
+
+        if not replace:
+            if strict and n_samples > self.vocabulary_size:
+                raise ValueError(
+                    f"Cannot generate {n_samples} strings without replacement, vocabulary size is {self.vocabulary_size}"
+                )
+
         logger.info(
-            f"Generating {set_length} strings with {frac_violations}% violations, according to {self.label} rules..."
+            f"Generating {n_samples} strings with {frac_violations}% violations, according to {self.label} rules..."
         )
+
         string_set = []
 
         # generate all strings without violations, for now
-        for _ in range(set_length):
-            string = self.generate_string(n_fillers, randomize_fillers)
-            string_set.append(string)
+        k = 0
+        max_samples = n_samples if replace else self.vocabulary_size
+        while k < max_samples:
+            string = self.generate_string(filler_len, randomize_fillers)
+            if not replace:
+                if string not in string_set:
+                    string_set.append(string)
+                    k += 1
+            else:
+                string_set.append(string)
+                k += 1
 
         # introduce violations
-        self._non_matching_frames(string_set, frac_violations)
+        self._apply_non_matching_frames(string_set, frac_violations)
 
-        return string_set
+        grammaticality = [True] * len(string_set)
+
+        return string_set, grammaticality
 
     # TODO finish implementation
-    def _non_matching_frames(self, string_set: list[list[str]], frac_violations: float = 0.5):
+    def _apply_non_matching_frames(self, string_set: list[list[str]], frac_violations: float = 0.5):
         """
         Generate strings that violate the dependency by modifying the last (dependent) symbol in some strings.
         This function modifies the string set in place.
+
+        TODO: currently assumes that the string_set only contains strings valid strings!!!
 
         Parameters
         ----------

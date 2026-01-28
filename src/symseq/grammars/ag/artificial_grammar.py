@@ -980,12 +980,15 @@ class ArtificialGrammar(SymbolicSequencer):
             if len(subset_strings) < n_target:
                 logger.warning(f"Only {len(subset_strings)}/{n_target} {worker_type} strings generated")
                 warnings.warn(f"Could not generate all {worker_type} strings", UserWarning)
+            # truncate to desired number of strings
+            if len(subset_strings) > n_target:
+                subset_strings = subset_strings[:n_target]
 
             return subset_strings
 
         # Determine counts
-        n_gramm_strings = int((1 - nongramm_fraction) * n_samples)
-        n_nongramm_strings = int(nongramm_fraction * n_samples)
+        n_gramm_strings = np.rint((1 - nongramm_fraction) * n_samples).astype(int)
+        n_nongramm_strings = np.rint(nongramm_fraction * n_samples).astype(int)
         logger.info(
             f"Generating {n_samples} ({n_gramm_strings} grammatical, {n_nongramm_strings} non-grammatical) strings..."
         )

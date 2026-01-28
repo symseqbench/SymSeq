@@ -7,7 +7,6 @@ seqwrapper.py
 This module contains the SeqWrapper class and SeqData dataclass to provide a consistent interface
 for subsequent processing.
 
-Author: Barna Zajzon
 """
 
 import os
@@ -19,6 +18,7 @@ from dataclasses import dataclass
 
 # internal imports
 from symseq.grammars.ag import ArtificialGrammar
+from symseq.grammars.nad import NonAdjacentDependencies
 from symseq.utils.io import get_logger
 from symseq.utils.strtools import clean_string_set, concatenate_string_set
 from symseq import tasks
@@ -32,7 +32,7 @@ class SeqContainer:
     Data class for storing and generating datasets.
     """
 
-    config: dict  # dataset section of the configuration file
+    # config: dict  # dataset section of the configuration file
     mode: str  # offline | online
     params: dict  # dataset parameters
 
@@ -67,7 +67,7 @@ class SeqWrapper:
         # load dataset if provided
         if "dataset" in config:
             self._validate_dataset_config(config["dataset"])
-            self.dataset = self.generate_data(config)
+            self.dataset = self.generate_data(**config["dataset"])
 
     @classmethod
     def from_config(cls, filepath):
@@ -85,11 +85,8 @@ class SeqWrapper:
             The SeqWrapper object.
         """
         with open(filepath) as f:
-            # config_data = toml.load(f)
             config_data = yaml.load(f, Loader=yaml.FullLoader)
-
         config = cls._parse_config(config_data)
-
         return cls(config)
 
     @classmethod
@@ -109,7 +106,6 @@ class SeqWrapper:
         """
 
         config = cls._parse_config(config)
-
         return cls(config)
 
     def _parse_generator_object(self, config_generator):
@@ -122,6 +118,8 @@ class SeqWrapper:
         if config_generator["type"] == "ArtificialGrammar":
             if "mode" not in config_generator:
                 raise ValueError("Invalid configuration file. Missing 'generator.mode' field.")
+            if "params" not in config_generator:
+                raise ValueError("Invalid configuration file. Missing 'generator.params' field.")
 
             # meta-parameters
             seed = config_generator.get("seed", None)
@@ -136,6 +134,11 @@ class SeqWrapper:
                 raise ValueError(
                     f"Invalid generator mode: {config_generator['mode']}. Valid modes are 'preset', 'random', and 'custom'."
                 )
+            return g
+        elif config_generator["type"] == "NonAdjacentDependencies":
+            seed = config_generator.get("seed", None)
+
+            g = NonAdjacentDependencies(seed=seed, **config_generator["params"])
             return g
 
         raise ValueError(f"Invalid generator type: {config_generator['type']}")
@@ -258,41 +261,43 @@ class SeqWrapper:
 
         return task_targets
 
-    def generate_data(self, config) -> SeqContainer:
+    def generate_data(self, mode: str, params: dict, concat_strings: bool = True) -> SeqContainer:
         """
         Generate train and test datasets using the provided generator.
 
         Parameters
         ----------
-        config : dict
-            SymSeq configuration dictionary.
+        mode : str
+            Generation mode (offline or online).
+        params : dict
+            Dataset generation parameters.
 
         Returns
         -------
-        seqdata : SeqData
-            A SeqData object containing the generated datasets (input and tasks).
+        seqdata : SeqContainer
+            A SeqContainer object containing the generated datasets (input and tasks).
         """
+        logger.info(f"Generating datasets for generator {self.generator.label}...")
 
-        dataset_config = config["dataset"]
-        params = dataset_config["params"]
-        if dataset_config["mode"] == "offline":
+        if mode == "offline":
             # generate strings of states first
             train_states, gramm_train = self.generator.generate_string_set(as_states=True, **params["train"])
             # remove state indices, convert to symbols
             train_set = clean_string_set(train_states, eos=self.generator.eos, as_states=False)
             # concatenate into single list
-            train_states = concatenate_string_set(train_states, eos=self.generator.eos)
-            train_set = concatenate_string_set(train_set, eos=self.generator.eos)
+            if concat_strings:
+                train_states = concatenate_string_set(train_states, eos=self.generator.eos)
+                train_set = concatenate_string_set(train_set, eos=self.generator.eos)
 
             # same for test set
             test_states, gramm_test = self.generator.generate_string_set(as_states=True, **params["test"])
             test_set = clean_string_set(test_states, eos=self.generator.eos, as_states=False)
-            test_states = concatenate_string_set(test_states, eos=self.generator.eos)
-            test_set = concatenate_string_set(test_set, eos=self.generator.eos)
+            if concat_strings:
+                test_states = concatenate_string_set(test_states, eos=self.generator.eos)
+                test_set = concatenate_string_set(test_set, eos=self.generator.eos)
 
             seqdata = SeqContainer(
-                config=dataset_config,
-                mode=dataset_config["mode"],
+                mode=mode,
                 params=params,
                 n_samples_train=len(train_set),
                 n_samples_test=len(test_set),
@@ -305,7 +310,7 @@ class SeqWrapper:
                 length_range=params["train"].get("length_range", None),
             )
 
-            seqdata.tasks = self._parse_tasks(config["tasks"], seqdata)
+            # seqdata.tasks = self._parse_tasks(config["tasks"], seqdata)
 
         elif dataset_config.mode == "online":
             raise NotImplementedError

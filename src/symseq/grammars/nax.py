@@ -17,7 +17,7 @@ logging = get_logger(__name__)
 
 class nAX(ArtificialGrammar):
     """
-    n-AX (conditional one-back) as a regular grammar with a SymSeq-friendly sampler.
+    n-AX (conditional one-back) as a regular grammar.
 
     A trial is a short symbolic sequence:
         [ Context_i, Cue_i, (0..k Fillers), Probe_j ]
@@ -247,9 +247,7 @@ class nAX(ArtificialGrammar):
 
         return transitions
 
-    def _add_cue_fanout(
-        self, transitions: List[Tuple[str, str, float]], ctx: str, cue: str, probes: set
-    ) -> None:
+    def _add_cue_fanout(self, transitions: List[Tuple[str, str, float]], ctx: str, cue: str, probes: set) -> None:
         """
         Add transitions from a cue state to filler and probe states.
 

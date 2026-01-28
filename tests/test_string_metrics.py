@@ -20,17 +20,17 @@ class TestEntropy:
 
     def test_uniform_distribution(self):
         seq = ['A', 'B', 'C', 'D']
-        H = entropy(seq)
+        H = entropy(seq, bias_correction=False)
         assert H == pytest.approx(2.0, abs=0.01)
 
     def test_constant_sequence(self):
         seq = ['A'] * 10
-        H = entropy(seq)
+        H = entropy(seq, bias_correction=False)
         assert H == pytest.approx(0.0, abs=0.01)
 
     def test_binary_sequence(self):
         seq = ['A', 'B']
-        H = entropy(seq)
+        H = entropy(seq, bias_correction=False)
         assert H == pytest.approx(1.0, abs=0.01)
 
     def test_empty_sequence(self):
@@ -38,14 +38,38 @@ class TestEntropy:
         H = entropy(seq)
         assert H == 0.0
 
+    def test_bias_correction_increases_entropy(self):
+        """Test that Miller-Madow bias correction increases entropy estimate."""
+        seq = ['A', 'B', 'C', 'D']
+        H_uncorrected = entropy(seq, bias_correction=False)
+        H_corrected = entropy(seq, bias_correction=True)
+        # Corrected entropy should be higher due to bias correction
+        assert H_corrected > H_uncorrected
+        # Verify the correction magnitude is reasonable (< 1 bit for this sample)
+        assert (H_corrected - H_uncorrected) < 1.0
+
+    def test_bias_correction_formula(self):
+        """Test that bias correction matches Miller-Madow formula."""
+        import numpy as np
+        seq = ['A', 'B', 'C', 'D']
+        H_uncorrected = entropy(seq, bias_correction=False)
+        H_corrected = entropy(seq, bias_correction=True)
+
+        # Manual calculation: correction = (M - 1) / (2 * N * ln(2))
+        M = 4  # number of unique symbols
+        N = 4  # sequence length
+        expected_correction = (M - 1) / (2.0 * N * np.log(2))
+
+        assert H_corrected == pytest.approx(H_uncorrected + expected_correction, abs=0.001)
+
 
 class TestBlockEntropy:
     """Tests for block_entropy function."""
 
     def test_block_size_1(self):
         seq = ['A', 'B', 'A', 'B']
-        H = block_entropy(seq, block_size=1)
-        H_regular = entropy(seq)
+        H = block_entropy(seq, block_size=1, bias_correction=False)
+        H_regular = entropy(seq, bias_correction=False)
         assert H == pytest.approx(H_regular, abs=0.01)
 
     def test_block_size_2(self):
