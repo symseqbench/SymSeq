@@ -4,8 +4,9 @@ test_nax.py
 Comprehensive test suite for the nAX class.
 """
 
-import pytest
 import numpy as np
+import pytest
+
 from symseq.grammars.nax import nAX
 
 

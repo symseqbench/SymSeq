@@ -4,8 +4,9 @@ test_dyck.py
 Comprehensive test suite for the DyckGenerator class.
 """
 
-import pytest
 import numpy as np
+import pytest
+
 from symseq.grammars.dyck import DyckGenerator
 
 

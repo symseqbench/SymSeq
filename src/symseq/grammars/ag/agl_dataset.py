@@ -8,15 +8,16 @@ This module contains functions for generating balanced AGL (Artificial Grammar L
 """
 
 from collections import defaultdict
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from multiprocessing import cpu_count
+
 import numpy as np
 import pandas as pd
-from concurrent.futures import ProcessPoolExecutor, as_completed
+
+from symseq.grammars.ag.utils import all_paths_as_strings, process_feature
 
 # internal imports
 from symseq.utils.io import get_logger
-from symseq.grammars.ag.utils import all_paths_as_strings, process_feature
-
 
 logger = get_logger(__name__)
 

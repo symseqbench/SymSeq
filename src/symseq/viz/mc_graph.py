@@ -1,10 +1,10 @@
 # SPDX-License-Identifier: MIT
 # Copyright (c) 2025-present, symseq Contributors
 
-import numpy as np
 import matplotlib.patches as mpatches
-from matplotlib.collections import PatchCollection
 import matplotlib.pyplot as plt
+import numpy as np
+from matplotlib.collections import PatchCollection
 
 from symseq.utils.io import get_logger
 

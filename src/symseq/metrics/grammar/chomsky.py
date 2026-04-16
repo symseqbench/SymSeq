@@ -3,14 +3,15 @@
 
 """Chomsky hierarchy classification via pattern detection."""
 
-import numpy as np
 import math
 from collections import Counter, defaultdict
 from gzip import compress
+
+import numpy as np
 from tqdm import tqdm
 
 
-def chomsky_classification(sequence: list[str], verbose: bool = False, 
+def chomsky_classification(sequence: list[str], verbose: bool = False,
                           max_search_positions: int = 500, max_pairs: int = 1000) -> dict:
     """
     Classify sequence position in Chomsky hierarchy.
@@ -112,7 +113,7 @@ def chomsky_classification(sequence: list[str], verbose: bool = False,
     # HIGH ratio (e.g., 0.9) = incompressible = Type 0 (random/complex)
     kolmogorov = _estimate_kolmogorov_complexity(sequence)
     apen = _calculate_approximate_entropy(sequence)
-    
+
     # Type 0 should have HIGH compression ratio (incompressible)
     # But also consider that true randomness has high ApEn
     # Regular processes have LOW compression ratio AND moderate ApEn
@@ -125,7 +126,7 @@ def chomsky_classification(sequence: list[str], verbose: bool = False,
     type2_score = np.mean(list(type2_patterns.values()))
     type1_score = np.mean(list(type1_patterns.values()))
     type0_score = np.mean(list(type0_patterns.values()))
-    
+
     # Boost Type 3 if FSA determinism is high (Markov chains should score high here)
     if type3_patterns.get('fsa_determinism', 0) > 0.6:
         type3_score = min(1.0, type3_score * 1.3)
@@ -136,13 +137,13 @@ def chomsky_classification(sequence: list[str], verbose: bool = False,
         'type1': type1_score,
         'type0': type0_score,
     }
-    
+
     if verbose:
         print(f"\n  Raw scores: Type3={type3_score:.3f}, Type2={type2_score:.3f}, Type1={type1_score:.3f}, Type0={type0_score:.3f}")
         print(f"  Key patterns: FSA_det={type3_patterns.get('fsa_determinism', 0):.3f}, Kolmogorov={kolmogorov:.3f}, ApEn={apen:.3f}")
 
     adjusted_scores = scores.copy()
-    
+
     # Hierarchy enforcement: prefer simpler classes
     if type3_score > 0.5:  # Lowered threshold for Type 3
         adjusted_scores['type2'] *= 0.5
@@ -159,9 +160,9 @@ def chomsky_classification(sequence: list[str], verbose: bool = False,
     estimated_type_num = int(estimated_type.replace('type', ''))
 
     reliable = max_score > 0.3 and len(sequence) > 20
-    
+
     # Build evidence string
-    type_names = {3: 'Regular (Type 3)', 2: 'Context-Free (Type 2)', 
+    type_names = {3: 'Regular (Type 3)', 2: 'Context-Free (Type 2)',
                   1: 'Context-Sensitive (Type 1)', 0: 'Unrestricted (Type 0)'}
     evidence_parts = []
     if estimated_type_num == 3:
@@ -184,7 +185,7 @@ def chomsky_classification(sequence: list[str], verbose: bool = False,
             evidence_parts.append('High incompressibility (poor compression)')
         if type0_patterns.get('irregularity', 0) > 0.5:
             evidence_parts.append('High irregularity (unpredictable)')
-    
+
     evidence = '; '.join(evidence_parts) if evidence_parts else 'No strong patterns detected'
 
     return {
@@ -326,7 +327,7 @@ def _detect_balanced_parentheses(sequence: list[str]) -> float:
         return 0.0
 
     matches = []
-    
+
     for symbol_a in unique_symbols:
         for symbol_b in unique_symbols:
             if symbol_a == symbol_b:
@@ -443,7 +444,7 @@ def _detect_triple_dependencies(sequence: list[str], max_search_positions: int =
     # Limit search to avoid O(n^4) complexity on long sequences
     max_search_positions = min(len(sequence), max_search_positions)
     search_step = max(1, len(sequence) // max_search_positions)
-    
+
     matches = []
 
     for sym_a in unique_symbols:

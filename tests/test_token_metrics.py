@@ -1,9 +1,9 @@
 """Tests for token-level metrics."""
 
-import pytest
 import numpy as np
+import pytest
 
-from symseq.metrics.token import token_frequency, most_common_tokens, token_duration_stats
+from symseq.metrics.token import most_common_tokens, token_duration_stats, token_frequency
 
 
 class TestTokenFrequency:

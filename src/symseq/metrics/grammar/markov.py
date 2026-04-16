@@ -3,9 +3,10 @@
 
 """Markov model analysis and order selection."""
 
-import numpy as np
-from collections import defaultdict, Counter
 import warnings
+from collections import Counter, defaultdict
+
+import numpy as np
 
 
 def markov_order_selection(
@@ -83,14 +84,14 @@ def markov_order_selection(
             log_L = 0.0
             # Count number of observed contexts (for reporting)
             num_observed_contexts = len(contexts)
-            
+
             # Calculate log-likelihood
             for context, next_counts in contexts.items():
                 total = sum(next_counts.values())
                 for count in next_counts.values():
                     if count > 0:
                         log_L += count * np.log(count / total)
-            
+
             # Calculate number of parameters using observed contexts
             # For each observed context, we have (alphabet_size - 1) free parameters
             # This is more appropriate than theoretical maximum for sparse data

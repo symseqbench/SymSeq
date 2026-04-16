@@ -9,7 +9,6 @@ from scipy.sparse.linalg import eigs
 from symseq.utils.io import get_logger
 from symseq.utils.strtools import chunk_transitions
 
-
 logger = get_logger(__name__)
 
 

@@ -3,8 +3,9 @@
 
 """Permutation entropy and ordinal pattern analysis."""
 
-import numpy as np
 from itertools import permutations
+
+import numpy as np
 
 try:
     from antropy import perm_entropy as antropy_perm_entropy

@@ -8,7 +8,7 @@ This module provides metrics that characterize individual symbols and their
 occurrence and feature distributions within sequences.
 """
 
-from .frequency import token_frequency, most_common_tokens
 from .duration import token_duration_stats
+from .frequency import most_common_tokens, token_frequency
 
 __all__ = ['token_frequency', 'most_common_tokens', 'token_duration_stats']

@@ -1,14 +1,16 @@
 # SPDX-License-Identifier: MIT
 # Copyright (c) 2025-present, symseq Contributors
 
-from collections import Counter
-import numpy as np
 import copy
+from collections import Counter
+
+import numpy as np
 import pandas as pd
+
+from symseq.core.state import State
 
 # local imports
 from ..utils.io import get_logger
-from symseq.core.state import State
 
 logger = get_logger(__name__)
 

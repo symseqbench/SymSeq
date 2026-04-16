@@ -34,26 +34,22 @@ All legacy functions are re-exported for backward compatibility.
 Use submodules (token, string, stringset, grammar) for new code.
 """
 
-from .string.entropy import entropy, block_entropy, entropy_rate, emc
+from . import grammar, string, stringset, token
+from .grammar.topological import topological_entropy
 from .string.compression import compressibility, lzw_complexity
+from .string.entropy import block_entropy, emc, entropy, entropy_rate
+from .stringset.chunk_strength import (
+    acs_bailey2008,
+    anchor_acs_knowlton96,
+    global_acs_knowlton96,
+)
 from .stringset.distances import (
-    hamming_distance,
+    average_string_similarity,
     edit_distance,
+    hamming_distance,
     pairwise_distances,
     string_similarity,
-    average_string_similarity,
 )
-from .stringset.chunk_strength import (
-    global_acs_knowlton96,
-    anchor_acs_knowlton96,
-    acs_bailey2008,
-)
-from .grammar.topological import topological_entropy
-
-from . import token
-from . import string
-from . import stringset
-from . import grammar
 
 __version__ = "0.0.1"
 

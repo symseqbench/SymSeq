@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: MIT
 # Copyright (c) 2025-present, symseq Contributors
 
-import os
 import logging
+import os
 import pickle as pkl
 
 
@@ -21,7 +21,7 @@ def get_logger(name):
         The logger object.
 
     """
-    logging.basicConfig(format="[%(filename)s:%(lineno)d - %(levelname)s] %(message)s".format(name), level=logging.INFO)
+    logging.basicConfig(format="[%(filename)s:%(lineno)d - %(levelname)s] %(message)s", level=logging.INFO)
     logger_ = logging.getLogger(name)
 
     return logger_

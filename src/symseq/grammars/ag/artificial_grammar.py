@@ -10,24 +10,23 @@ used in psycholinguistic experiments.
 
 import copy
 import logging
+import random
+import warnings
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from multiprocessing import cpu_count
+
+import networkx as nx
 import numpy as np
 import pandas as pd
-import warnings
-import networkx as nx
-import random
-from concurrent.futures import ProcessPoolExecutor, as_completed
 
 # internal imports
 from symseq.core.sequencer import SymbolicSequencer
 from symseq.core.state import State
-from symseq.grammars.ag import agl_dataset
-from symseq.grammars.ag import utils, presets
+from symseq.grammars.ag import agl_dataset, presets, utils
 from symseq.grammars.ag.generator import generate_random_grammar, grammar_with_complexity
 from symseq.utils.io import get_logger, save_pickle
 from symseq.utils.strtools import string_as_symbols
 from symseq.viz.ag_viz import plot_grammar
-
 
 logger = get_logger(__name__)
 
@@ -422,11 +421,11 @@ class ArtificialGrammar(SymbolicSequencer):
         """
         logger.info("***************************************************************************")
         if self.label is not None:
-            logger.info(("Generative mechanism: %s" % self.label))
-        logger.info("Alphabet: {0}".format(self.alphabet))
-        logger.info("Unique states: {0}".format(self.states))
-        logger.info("Start states: {0}".format(self.start_states))
-        logger.info("Terminal states: {0}".format(self.terminal_states))
+            logger.info("Generative mechanism: %s" % self.label)
+        logger.info(f"Alphabet: {self.alphabet}")
+        logger.info(f"Unique states: {self.states}")
+        logger.info(f"Start states: {self.start_states}")
+        logger.info(f"Terminal states: {self.terminal_states}")
         self.get_transition_table(verbose=True)
 
     def get_transition_table(self, full=True, correct_terminal_sink=False, verbose=True, binary=False):

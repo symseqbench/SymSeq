@@ -9,10 +9,10 @@ This module contains the DyckGenerator class for creating k-Dyck languages.
 
 from __future__ import annotations
 
-from typing import Dict, List, Optional, Sequence, Literal
-import numpy as np
 import string
+from typing import Dict, List, Literal, Optional, Sequence
 
+import numpy as np
 
 Mode = Literal["stack", "uniform"]
 
@@ -102,13 +102,13 @@ class DyckGenerator:
         self,
         k: int,
         mode: Mode,
-        parentheses: Optional[Dict[str, str]] = None,
+        parentheses: dict[str, str] | None = None,
         p_open: float = 0.3,
-        target_pairs: Optional[int] = None,
-        max_depth: Optional[int] = None,
-        distractors: Optional[Sequence[str]] = None,
+        target_pairs: int | None = None,
+        max_depth: int | None = None,
+        distractors: Sequence[str] | None = None,
         n_distractors: int = 2,
-        rng: Optional[np.random.Generator] = None,
+        rng: np.random.Generator | None = None,
         uniform_colorize: bool = True,
     ):
         self.k = k
@@ -175,7 +175,7 @@ class DyckGenerator:
 
         self._compute_alphabet()
 
-    def _generate_default_parentheses(self, k: int) -> Dict[str, str]:
+    def _generate_default_parentheses(self, k: int) -> dict[str, str]:
         """
         Generate default parenthesis pairs using lowercase/uppercase letters.
 
@@ -198,7 +198,7 @@ class DyckGenerator:
         uppercase = string.ascii_uppercase[:k]
         return {lower: upper for lower, upper in zip(lowercase, uppercase)}
 
-    def _generate_default_distractors(self, n_distractors: int) -> List[str]:
+    def _generate_default_distractors(self, n_distractors: int) -> list[str]:
         """
         Generate default distractor symbols using digit strings.
 
@@ -226,7 +226,7 @@ class DyckGenerator:
 
         return [str(i) for i in range(n_distractors)]
 
-    def _check_max_depth(self, string: List[str]) -> bool:
+    def _check_max_depth(self, string: list[str]) -> bool:
         """
         Check if a token list respects the max_depth constraint.
 
@@ -256,7 +256,7 @@ class DyckGenerator:
 
         return True
 
-    def _is_valid_dyck(self, string: List[str]) -> bool:
+    def _is_valid_dyck(self, string: list[str]) -> bool:
         """
         Check if a token list is a valid Dyck string (ignoring distractors).
 
@@ -275,7 +275,7 @@ class DyckGenerator:
         bool
             True if the token list forms a valid Dyck string, False otherwise.
         """
-        stack: List[str] = []
+        stack: list[str] = []
 
         for tok in string:
             # Skip distractors
@@ -310,7 +310,7 @@ class DyckGenerator:
         add_distractors: bool = False,
         n_distractors: int = 0,
         max_attempts: int = 1000,
-    ) -> List[str]:
+    ) -> list[str]:
         """
         Generate a single Dyck token list.
 
@@ -363,7 +363,7 @@ class DyckGenerator:
         add_distractors: bool = False,
         n_distractors: int = 0,
         max_attempts: int = 1000,
-    ) -> List[List[str]]:
+    ) -> list[list[str]]:
         """
         Generate a list of Dyck token lists.
 
@@ -394,12 +394,12 @@ class DyckGenerator:
         self,
         n: int,
         n_deviants: int = 1,
-        strategies: Optional[Sequence[str]] = None,
+        strategies: Sequence[str] | None = None,
         add_distractors: bool = False,
         n_distractors: int = 0,
         max_attempts: int = 1000,
         verify_illegal: bool = True,
-    ) -> List[List[str]]:
+    ) -> list[list[str]]:
         """
         Generate illegal strings by applying local corruptions to valid Dyck strings.
 
@@ -439,7 +439,7 @@ class DyckGenerator:
         if add_distractors and n_distractors == 0:
             n_distractors = self.n_distractors
 
-        out: List[List[str]] = []
+        out: list[list[str]] = []
         for _ in range(n):
             for attempt in range(max_attempts):
                 base = self.generate_string(add_distractors=False, max_attempts=max_attempts)
@@ -466,12 +466,12 @@ class DyckGenerator:
 
     # =========================== Core: stack mode ===========================
 
-    def _sample_valid_stack(self) -> List[str]:
+    def _sample_valid_stack(self) -> list[str]:
         """
         Sample a valid Dyck token list using a probabilistic stack process.
         """
-        string: List[str] = []
-        stack: List[str] = []
+        string: list[str] = []
+        stack: list[str] = []
 
         # start with one random opening
         first_open = self._choice(self._opens)
@@ -492,7 +492,7 @@ class DyckGenerator:
 
     # ========================= Core: uniform mode ==========================
 
-    def _sample_uniform_pairs(self, n_pairs: int) -> List[str]:
+    def _sample_uniform_pairs(self, n_pairs: int) -> list[str]:
         """
         Sample a valid Dyck token list with exactly `2 * n_pairs` string,
         uniformly over Catalan structures of size `n_pairs`. If multiple
@@ -505,7 +505,7 @@ class DyckGenerator:
         # Precompute Catalan numbers up to n_pairs
         C = self._catalans(n_pairs)
 
-        def recurse(n: int) -> List[str]:
+        def recurse(n: int) -> list[str]:
             if n == 0:
                 return []
             # choose split k with probability (C[k] * C[n-1-k]) / C[n]
@@ -522,7 +522,7 @@ class DyckGenerator:
 
     # ===================== Violations & Distractors ========================
 
-    def _apply_violation(self, string: List[str], strategy: str) -> List[str]:
+    def _apply_violation(self, string: list[str], strategy: str) -> list[str]:
         """
         Apply a single corruption strategy to a token list.
         """
@@ -564,7 +564,7 @@ class DyckGenerator:
 
         return t  # unknown strategy: no-op
 
-    def _inject_distractors(self, string: List[str], n_distractors: int) -> List[str]:
+    def _inject_distractors(self, string: list[str], n_distractors: int) -> list[str]:
         """
         Insert `n_distractors` distractor string at random positions.
         """
@@ -588,7 +588,7 @@ class DyckGenerator:
             items |= set(self.distractors)
         self.alphabet = sorted(items)
 
-    def _catalans(self, n: int) -> List[int]:
+    def _catalans(self, n: int) -> list[int]:
         """
         Compute Catalan numbers C[0..n] via dynamic programming.
 

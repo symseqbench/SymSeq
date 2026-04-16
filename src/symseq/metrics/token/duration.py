@@ -3,8 +3,9 @@
 
 """Token duration statistics."""
 
-import numpy as np
 from collections import defaultdict
+
+import numpy as np
 
 
 def token_duration_stats(

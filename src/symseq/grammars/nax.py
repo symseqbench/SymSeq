@@ -6,7 +6,9 @@ Models n-AX (conditional one-back) as a regular grammar.
 """
 
 from __future__ import annotations
+
 from typing import Dict, List, Optional, Sequence, Tuple
+
 import numpy as np
 
 from symseq.grammars.ag import ArtificialGrammar
@@ -65,14 +67,14 @@ class nAX(ArtificialGrammar):
         self,
         label: str = "n-AX",
         contexts: Sequence[str] = ("1", "2"),
-        cue_map: Optional[Dict[str, str]] = None,
-        probe_map: Optional[Dict[str, str]] = None,
+        cue_map: dict[str, str] | None = None,
+        probe_map: dict[str, str] | None = None,
         fillers: Sequence[str] = ("C", "D", "Z"),
-        context_probs: Optional[Sequence[float]] = None,
-        probe_given_context: Optional[np.ndarray] = None,
+        context_probs: Sequence[float] | None = None,
+        probe_given_context: np.ndarray | None = None,
         p_target: float = 0.6,
         eos: str = "#",
-        rng: Optional[np.random.Generator] = None,
+        rng: np.random.Generator | None = None,
         seed: int = 42,
         verbose: bool = False,
     ):
@@ -173,7 +175,7 @@ class nAX(ArtificialGrammar):
             #     raise ValueError("Rows of probe_given_context must sum to > 0.")
             # self.probe_given_context = self.probe_given_context / row_sums
 
-    def _build_grammar(self) -> Tuple[List[str], List[str], List[str], List[str], List[Tuple[str, str, float]]]:
+    def _build_grammar(self) -> tuple[list[str], list[str], list[str], list[str], list[tuple[str, str, float]]]:
         """
         Build alphabet, states, start states, terminal states, and transitions.
 
@@ -189,9 +191,9 @@ class nAX(ArtificialGrammar):
         alphabet = sorted(set(self.contexts) | cues | probes | set(self.fillers))
 
         # Build states
-        states: List[str] = []
-        start_states: List[str] = list(self.contexts)
-        terminal_states: List[str] = list(probes)
+        states: list[str] = []
+        start_states: list[str] = list(self.contexts)
+        terminal_states: list[str] = list(probes)
 
         # Basic symbol states
         states.extend(list(set(self.contexts)))
@@ -211,7 +213,7 @@ class nAX(ArtificialGrammar):
 
         return alphabet, states, start_states, terminal_states, transitions
 
-    def _build_transitions(self, cues: set, probes: set) -> List[Tuple[str, str, float]]:
+    def _build_transitions(self, cues: set, probes: set) -> list[tuple[str, str, float]]:
         """
         Build all state transitions for the grammar.
 
@@ -227,7 +229,7 @@ class nAX(ArtificialGrammar):
         list of tuple
             List of (source_state, target_state, probability) transitions.
         """
-        transitions: List[Tuple[str, str, float]] = []
+        transitions: list[tuple[str, str, float]] = []
 
         # Context -> Cue (deterministic)
         for ctx in self.contexts:
@@ -247,7 +249,7 @@ class nAX(ArtificialGrammar):
 
         return transitions
 
-    def _add_cue_fanout(self, transitions: List[Tuple[str, str, float]], ctx: str, cue: str, probes: set) -> None:
+    def _add_cue_fanout(self, transitions: list[tuple[str, str, float]], ctx: str, cue: str, probes: set) -> None:
         """
         Add transitions from a cue state to filler and probe states.
 
@@ -274,7 +276,7 @@ class nAX(ArtificialGrammar):
         for src, tgt, _ in fan:
             transitions.append((src, tgt, w))
 
-    def _add_filler_fanout(self, transitions: List[Tuple[str, str, float]], ctx: str, probes: set) -> None:
+    def _add_filler_fanout(self, transitions: list[tuple[str, str, float]], ctx: str, probes: set) -> None:
         """
         Add transitions from filler states to other fillers or probes.
 
@@ -379,7 +381,7 @@ class nAX(ArtificialGrammar):
 
     # ============================== Utilities ==============================
     # TODO This belongs more to the task definition
-    def label_trial(self, string: List[str]) -> Tuple[str, bool]:
+    def label_trial(self, string: list[str]) -> tuple[str, bool]:
         """
         Label as target or lure and return (label, is_target).
 

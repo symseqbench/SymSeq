@@ -3,10 +3,11 @@
 
 """Shannon entropy and related metrics with robust finite-sample handling."""
 
-import numpy as np
-from collections import Counter
 import warnings
-from typing import Union, List, Dict, Tuple, Optional
+from collections import Counter
+from typing import Dict, List, Optional, Tuple, Union
+
+import numpy as np
 
 
 def entropy(sequence: list[str], bias_correction: bool = True) -> float:
@@ -51,23 +52,23 @@ def entropy(sequence: list[str], bias_correction: bool = True) -> float:
     """
     if len(sequence) == 0:
         return 0.0
-        
+
     cnt = Counter(sequence)
     N = len(sequence)
     M = len(cnt)  # Number of observed symbols
-    
+
     # Compute empirical entropy
     H_emp = 0.0
     for count in cnt.values():
         if count > 0:
             p = count / N
             H_emp -= p * np.log2(p)
-    
+
     # Apply Miller-Madow bias correction
     if bias_correction and N > 0:
         correction = (M - 1) / (2.0 * N * np.log(2))
         return H_emp + correction
-    
+
     return H_emp
 
 
@@ -105,15 +106,15 @@ def block_entropy(sequence: list[str], block_size: int, bias_correction: bool = 
 
     # Create L-grams
     blocks = tuple(
-        "".join(sequence[i : i + block_size]) 
+        "".join(sequence[i : i + block_size])
         for i in range(n - block_size + 1)
     )
-    
+
     # Use entropy() function for consistency
     return entropy(list(blocks), bias_correction=bias_correction)
 
 
-def entropy_rate(sequence: list[str], 
+def entropy_rate(sequence: list[str],
                  max_block_size: int,
                  method: str = 'incremental',
                  min_block_size: int = 2) -> float:
@@ -154,7 +155,7 @@ def entropy_rate(sequence: list[str],
             UserWarning
         )
         max_block_size = max(2, len(sequence) // 3)
-    
+
     if method == 'incremental':
         # Compute incremental entropies h_k = H_{k+1} - H_k
         # For stationary processes, h_k converges to h_μ (the entropy rate)
@@ -166,26 +167,26 @@ def entropy_rate(sequence: list[str],
             if k > 1:
                 h_k = H_k - H_values[k-2]
                 h_incremental.append(h_k)
-        
+
         if not h_incremental:
             return entropy(sequence)
-        
+
         # Detect saturation: find where increments start dropping significantly
         # For well-sampled sequences, increments should be stable
         # For under-sampled sequences, increments drop when we run out of data
-        
+
         if len(h_incremental) >= 4:
             # Look for where increments drop below 70% of the early average
             # Use first 2-3 increments as baseline (most reliable)
             early_increments = h_incremental[:min(3, len(h_incremental))]
             mean_early = np.mean(early_increments)
-            
+
             saturation_idx = None
             for i in range(len(early_increments), len(h_incremental)):
                 if h_incremental[i] < 0.7 * mean_early:
                     saturation_idx = i
                     break
-            
+
             if saturation_idx is not None:
                 # Saturation detected - use increments AFTER saturation (converged)
                 # Early increments overestimate h_mu for sequences with memory
@@ -194,39 +195,39 @@ def entropy_rate(sequence: list[str],
                     return np.mean(converged_increments)
                 else:
                     return h_incremental[saturation_idx] if saturation_idx < len(h_incremental) else h_incremental[-1]
-            
+
             # No saturation - check for convergence
             # Use coefficient of variation of last 3 values
             last_3 = h_incremental[-3:]
             mean_last = np.mean(last_3)
             std_last = np.std(last_3)
-            
+
             if mean_last > 0.01:  # Only if increments are meaningful
                 cv = std_last / mean_last  # Coefficient of variation
                 if cv < 0.1:  # Less than 10% variation
                     return mean_last
-        
+
         # Fallback: use mean of first half (before potential saturation)
         n_use = max(2, len(h_incremental) // 2)
         return np.mean(h_incremental[:n_use])
-    
+
     else:  # 'normalized' method
         # Compute H_k / k for increasing k
         normalized_entropies = []
         for k in range(1, max_block_size + 1):
             H_k = block_entropy(sequence, k)
             normalized_entropies.append(H_k / k)
-        
+
         # Similar convergence detection
         if len(normalized_entropies) >= 4:
             last_3 = normalized_entropies[-3:]
             if np.std(last_3) / np.mean(last_3) < 0.05:
                 return np.mean(last_3)
-        
+
         return np.median(normalized_entropies[-3:])
 
 
-def emc(sequence: list[str], 
+def emc(sequence: list[str],
         max_block_size: int = 10,
         return_curve: bool = False) -> tuple:
     """
@@ -281,35 +282,35 @@ def emc(sequence: list[str],
     """
     # First estimate entropy rate robustly
     h_mu = entropy_rate(sequence, max_block_size, method='incremental')
-    
+
     # Compute excess curve: E(L) = H_L - L*h_mu
     excess_curve = []
     for L in range(1, max_block_size + 1):
         H_L = block_entropy(sequence, L)
         E_L = H_L - L * h_mu
         excess_curve.append(E_L)
-    
+
     # Find where the curve plateaus (converges)
     # Strategy: Find maximum in first 2/3 of curve, then check stability
-    
+
     if len(excess_curve) >= 4:
         # Find peak location (usually early in curve)
         search_range = max(3, len(excess_curve) * 2 // 3)
         peak_idx = np.argmax(excess_curve[:search_range])
         peak_value = excess_curve[peak_idx]
-        
+
         # Check if subsequent values are stable near peak
         # (within 5% of peak value)
         stable_values = []
         tolerance = 0.05 * abs(peak_value) if peak_value != 0 else 0.01
-        
+
         for i in range(peak_idx, len(excess_curve)):
             if abs(excess_curve[i] - peak_value) <= tolerance:
                 stable_values.append(excess_curve[i])
             else:
                 # Curve started decreasing significantly - stop
                 break
-        
+
         if len(stable_values) >= 2:
             # Found a stable plateau
             emc_value = np.mean(stable_values)
@@ -328,10 +329,10 @@ def emc(sequence: list[str],
             "Insufficient block sizes for reliable EMC. Results may be unreliable.",
             UserWarning
         )
-    
+
     # Sanity check: EMC should be non-negative and bounded
     emc_value = max(0.0, emc_value)  # Can't be negative
-    
+
     if return_curve:
         return emc_value, h_mu, excess_curve
     else:
@@ -372,10 +373,10 @@ def detect_saturation_point(sequence: list[str],
     """
     # Compute block entropies
     H_values = [block_entropy(sequence, k) for k in range(1, max_k + 1)]
-    
+
     # Compute increments δ_k = H_{k+1} - H_k
     increments = [H_values[i+1] - H_values[i] for i in range(len(H_values) - 1)]
-    
+
     if len(increments) < 2:
         return {
             'k_star': 1,
@@ -385,63 +386,63 @@ def detect_saturation_point(sequence: list[str],
             'H_values': H_values,
             'diagnostic': {'error': 'Insufficient data points'}
         }
-    
+
     # Estimate noise level from late increments (should be small if converged)
     if len(increments) >= 4:
         noise_estimate = np.std(increments[-3:])  # Last 3 increments
     else:
         noise_estimate = np.std(increments) / 2
-    
+
     k_star = None
     confidence = 'low'
     diagnostic = {}
-    
+
     if method == 'statistical':
         # Method 1: Statistical significance test
         # Find where increment is not significantly different from noise
         threshold = 2 * noise_estimate  # 2-sigma
-        
+
         for i, inc in enumerate(increments):
             if i > 0 and inc < threshold:  # Skip k=1→2 (first jump)
                 k_star = i + 1  # Convert to k value
                 confidence = 'high' if inc < noise_estimate else 'medium'
                 break
-        
+
         diagnostic['noise_estimate'] = noise_estimate
         diagnostic['threshold'] = threshold
-    
+
     elif method == 'relative':
         # Method 2: Relative drop from first increment
         # Look for where increment drops significantly from maximum
         max_increment = max(increments)
         threshold_ratio = 0.15  # 15% of maximum increment
-        
+
         for i in range(1, len(increments)):
             if increments[i] / max_increment < threshold_ratio:
                 k_star = i + 1
                 confidence = 'medium'
                 break
-        
+
         diagnostic['max_increment'] = max_increment
         diagnostic['threshold_ratio'] = threshold_ratio
-    
+
     elif method == 'adaptive':
         # Method 3: Adaptive - test for constant increments (IID) vs. elbow (memory)
         #
         # Key insight: For IID sequences, increments stay roughly constant until
         # sample exhaustion. For sequences with memory, there's a clear drop after k*.
-        
+
         if len(increments) >= 4:
             # Test if early increments are statistically constant (IID pattern)
             # Use first 3-4 increments before sample-size effects dominate
             n_early = min(4, len(increments) - 1)
             early_increments = increments[:n_early]
-            
+
             # Coefficient of variation for early increments
             mean_early = np.mean(early_increments)
             std_early = np.std(early_increments)
             cv_early = std_early / mean_early if mean_early > 0 else 0
-            
+
             # If CV < 15%, increments are roughly constant (likely IID or very high memory)
             # In this case, k* = 1 (no detectable memory within our resolution)
             if cv_early < 0.15:
@@ -457,26 +458,26 @@ def detect_saturation_point(sequence: list[str],
                         diagnostic['cv_early'] = cv_early
                         diagnostic['sample_limit_at'] = i
                         break
-                
+
                 if k_star is None:
                     # Never dropped - truly constant
                     k_star = 1
                     confidence = 'high' if cv_early < 0.10 else 'medium'
                     diagnostic['pattern'] = 'iid_like'
                     diagnostic['cv_early'] = cv_early
-            
+
             else:
                 # Increments are NOT constant - look for elbow (memory signature)
                 # Find the point where increment drops below a threshold
-                
+
                 # Use a relative threshold based on the maximum increment
                 max_inc = max(increments[:n_early])  # Max from early increments
                 threshold = 0.30 * max_inc  # 30% of max
-                
+
                 for i in range(1, len(increments)):
                     if increments[i] < threshold:
                         k_star = i + 1
-                        
+
                         # Confidence based on sharpness of drop
                         if i > 0:
                             drop_ratio = increments[i] / increments[i-1]
@@ -488,31 +489,31 @@ def detect_saturation_point(sequence: list[str],
                                 confidence = 'low'
                         else:
                             confidence = 'medium'
-                        
+
                         diagnostic['pattern'] = 'elbow_detected'
                         diagnostic['cv_early'] = cv_early
                         diagnostic['threshold'] = threshold
                         diagnostic['drop_ratio'] = drop_ratio if i > 0 else None
                         break
-        
+
         else:
             # Too few points
             k_star = 1
             confidence = 'low'
             diagnostic['pattern'] = 'insufficient_data'
-    
+
     elif method == 'hybrid':
         # Method 4: Run all methods and use majority vote
         methods_to_try = ['statistical', 'relative', 'adaptive']
         k_candidates = []
-        
+
         for m in methods_to_try:
             result = detect_saturation_point(sequence, max_k, method=m)
             k_candidates.append(result['k_star'])
-        
+
         # Use median (robust to outliers)
         k_star = int(np.median(k_candidates))
-        
+
         # Confidence based on agreement
         k_std = np.std(k_candidates)
         if k_std < 0.5:
@@ -521,25 +522,25 @@ def detect_saturation_point(sequence: list[str],
             confidence = 'medium'
         else:
             confidence = 'low'
-        
+
         diagnostic['k_candidates'] = k_candidates
         diagnostic['k_std'] = k_std
-    
+
     # Fallback if no saturation detected
     if k_star is None:
         k_star = max_k
         confidence = 'low'
         diagnostic['warning'] = 'No clear saturation detected within max_k'
-    
+
     # Additional validation
     N = len(sequence)
     alphabet_size = len(set(sequence))
-    
+
     # Check if k* is reasonable given sequence length
     # Rule of thumb: Need N >> |A|^k for reliable k-gram statistics
     min_samples_per_kgram = 3
     max_reliable_k = int(np.floor(np.log(N / min_samples_per_kgram) / np.log(alphabet_size)))
-    
+
     if k_star > max_reliable_k:
         warnings.warn(
             f"Detected k*={k_star} may be unreliable for N={N} and alphabet size={alphabet_size}. "
@@ -547,11 +548,11 @@ def detect_saturation_point(sequence: list[str],
             UserWarning
         )
         confidence = 'low'
-    
+
     diagnostic['max_reliable_k'] = max_reliable_k
     diagnostic['N'] = N
     diagnostic['alphabet_size'] = alphabet_size
-    
+
     return {
         'k_star': k_star,
         'confidence': confidence,
@@ -562,7 +563,7 @@ def detect_saturation_point(sequence: list[str],
     }
 
 
-def compute_adaptive_max_k(sequence: list[str], 
+def compute_adaptive_max_k(sequence: list[str],
                            default_max_k: int = 6,
                            min_samples_per_kgram: int = 5) -> int:
     """
@@ -589,18 +590,18 @@ def compute_adaptive_max_k(sequence: list[str],
     """
     seq_len = len(sequence)
     alphabet_size = len(set(sequence))
-    
+
     if alphabet_size <= 1:
         return min(2, seq_len - 1) if seq_len > 1 else 1
-    
+
     # Calculate maximum k where we have enough samples
     max_k_reliable = int(np.log(seq_len / min_samples_per_kgram) / np.log(alphabet_size))
-    
+
     # Ensure at least k=2 for meaningful analysis, but not more than default
     return max(2, min(default_max_k, max_k_reliable, seq_len - 1))
 
 
-def aggregate_saturation_results(saturation_results: List[Dict]) -> Dict:
+def aggregate_saturation_results(saturation_results: list[dict]) -> dict:
     """
     Aggregate saturation detection results across multiple sequences.
     
@@ -626,19 +627,19 @@ def aggregate_saturation_results(saturation_results: List[Dict]) -> Dict:
             'confidence_counts': {'high': 0, 'medium': 0, 'low': 0},
             'k_star_values': []
         }
-    
+
     k_star_values = [r['k_star'] for r in saturation_results]
     confidences = [r['confidence'] for r in saturation_results]
-    
+
     # Weighted median using confidence levels
     conf_map = {'high': 3, 'medium': 2, 'low': 1}
     weights = [conf_map[c] for c in confidences]
-    
+
     # Sort by k* value with corresponding weights
     sorted_pairs = sorted(zip(k_star_values, weights))
     cumsum = 0
     total = sum(weights)
-    
+
     # Find weighted median
     k_star_consensus = sorted_pairs[-1][0]  # Default to max
     for val, weight in sorted_pairs:
@@ -646,13 +647,13 @@ def aggregate_saturation_results(saturation_results: List[Dict]) -> Dict:
         if cumsum >= total / 2:
             k_star_consensus = val
             break
-    
+
     # Compute confidence statistics
     high_conf_count = confidences.count('high')
     medium_conf_count = confidences.count('medium')
     low_conf_count = confidences.count('low')
     total_count = len(confidences)
-    
+
     # Overall confidence based on proportion of high-confidence results
     if high_conf_count / total_count > 0.6:
         overall_confidence = 'high'
@@ -660,7 +661,7 @@ def aggregate_saturation_results(saturation_results: List[Dict]) -> Dict:
         overall_confidence = 'medium'
     else:
         overall_confidence = 'low'
-    
+
     return {
         'k_star': int(k_star_consensus),
         'confidence': overall_confidence,
@@ -673,7 +674,7 @@ def aggregate_saturation_results(saturation_results: List[Dict]) -> Dict:
     }
 
 
-def _compute_block_entropies_cached(sequence: list[str], max_k: int) -> Dict[int, float]:
+def _compute_block_entropies_cached(sequence: list[str], max_k: int) -> dict[int, float]:
     """Compute all block entropies up to max_k once (helper for optimization)."""
     H_values = {}
     for k in range(1, max_k + 1):
@@ -681,14 +682,14 @@ def _compute_block_entropies_cached(sequence: list[str], max_k: int) -> Dict[int
     return H_values
 
 
-def _emc_from_cache(H_cache: Dict[int, float], max_k: int) -> Tuple[float, float]:
+def _emc_from_cache(H_cache: dict[int, float], max_k: int) -> tuple[float, float]:
     """Compute EMC using pre-computed H values (helper for optimization)."""
     # Estimate entropy rate from cached values
     h_incremental = []
     for k in range(2, max_k + 1):
         h_k = H_cache[k] - H_cache[k-1]
         h_incremental.append(h_k)
-    
+
     # Use LATE increments for h_mu (converged values, not early ones)
     # Early increments overestimate h_mu for sequences with memory
     if len(h_incremental) >= 4:
@@ -706,37 +707,37 @@ def _emc_from_cache(H_cache: Dict[int, float], max_k: int) -> Tuple[float, float
         h_mu = h_incremental[-1]  # Use last available increment
     else:
         h_mu = 0.0
-    
+
     # Compute excess curve
     excess_curve = []
     for L in range(1, max_k + 1):
         E_L = H_cache[L] - L * h_mu
         excess_curve.append(E_L)
-    
+
     # Find plateau (same logic as original emc function)
     if len(excess_curve) >= 4:
         search_range = max(3, len(excess_curve) * 2 // 3)
         peak_idx = np.argmax(excess_curve[:search_range])
         peak_value = excess_curve[peak_idx]
-        
+
         stable_values = []
         tolerance = 0.05 * abs(peak_value) if peak_value != 0 else 0.01
-        
+
         for i in range(peak_idx, len(excess_curve)):
             if abs(excess_curve[i] - peak_value) <= tolerance:
                 stable_values.append(excess_curve[i])
             else:
                 break
-        
+
         if len(stable_values) >= 2:
             emc_value = np.mean(stable_values)
         else:
             emc_value = peak_value
     else:
         emc_value = max(excess_curve) if excess_curve else 0.0
-    
+
     emc_value = max(0.0, emc_value)
-    
+
     # Validate: h_mu + emc should approximately equal H(1)
     H_1 = H_cache[1]
     decomposition_sum = h_mu + emc_value
@@ -751,11 +752,11 @@ def _emc_from_cache(H_cache: Dict[int, float], max_k: int) -> Tuple[float, float
     return emc_value, h_mu
 
 
-def _detect_saturation_from_cache(H_cache: Dict[int, float], max_k: int, method: str = 'adaptive') -> Dict:
+def _detect_saturation_from_cache(H_cache: dict[int, float], max_k: int, method: str = 'adaptive') -> dict:
     """Detect saturation using pre-computed H values (helper for optimization)."""
     H_values = [H_cache[k] for k in range(1, max_k + 1)]
     increments = [H_values[i+1] - H_values[i] for i in range(len(H_values) - 1)]
-    
+
     # Simplified saturation detection (basic version)
     if len(increments) >= 3:
         # Find where increments drop significantly
@@ -769,7 +770,7 @@ def _detect_saturation_from_cache(H_cache: Dict[int, float], max_k: int, method:
                     'increments': increments,
                     'H_values': H_values
                 }
-    
+
     return {
         'k_star': 2,
         'confidence': 'low',
@@ -779,10 +780,10 @@ def _detect_saturation_from_cache(H_cache: Dict[int, float], max_k: int, method:
     }
 
 
-def compute_entropy_metrics_ensemble(sequences: List[list[str]],
-                                     max_block_size: Optional[int] = None,
+def compute_entropy_metrics_ensemble(sequences: list[list[str]],
+                                     max_block_size: int | None = None,
                                      min_sequence_length: int = 10,
-                                     saturation_method: str = 'hybrid') -> Dict:
+                                     saturation_method: str = 'hybrid') -> dict:
     """
     Compute entropy-based metrics on an ensemble of sequences.
     
@@ -813,7 +814,7 @@ def compute_entropy_metrics_ensemble(sequences: List[list[str]],
     """
     # Filter sequences by minimum length
     valid_sequences = [seq for seq in sequences if len(seq) >= min_sequence_length]
-    
+
     if not valid_sequences:
         warnings.warn(
             f"No sequences meet minimum length requirement ({min_sequence_length}). "
@@ -828,37 +829,37 @@ def compute_entropy_metrics_ensemble(sequences: List[list[str]],
             'n_sequences_analyzed': 0,
             'mean_sequence_length': 0.0
         }
-    
+
     # Compute metrics for each sequence
     block_entropies_k2 = []
     entropy_rates = []
     emcs = []
     saturation_results = []
-    
+
     for seq in valid_sequences:
         # Determine adaptive max_k for this sequence
         if max_block_size is None:
             max_k = compute_adaptive_max_k(seq, default_max_k=6)
         else:
             max_k = min(max_block_size, len(seq) - 1)
-        
+
         # Skip if max_k is too small for meaningful analysis
         if max_k < 2:
             continue
-        
+
         # OPTIMIZATION: Compute all block entropies once and reuse
         try:
             H_cache = _compute_block_entropies_cached(seq, max_k)
         except Exception as e:
             warnings.warn(f"Failed to compute block entropies: {e}", UserWarning)
             continue
-        
+
         # Use cached block entropy at k=2
         try:
             block_entropies_k2.append(H_cache[2])
         except Exception as e:
             warnings.warn(f"Failed to retrieve block entropy k=2: {e}", UserWarning)
-        
+
         # Compute entropy rate and EMC using cached values
         if max_k >= 3:
             try:
@@ -867,17 +868,17 @@ def compute_entropy_metrics_ensemble(sequences: List[list[str]],
                 emcs.append(emc_val)
             except Exception as e:
                 warnings.warn(f"Failed to compute EMC/entropy rate from cache: {e}", UserWarning)
-            
+
             # Saturation detection using cached values
             try:
                 sat_result = _detect_saturation_from_cache(H_cache, max_k, method=saturation_method)
                 saturation_results.append(sat_result)
             except Exception as e:
                 warnings.warn(f"Failed saturation detection from cache: {e}", UserWarning)
-    
+
     # Aggregate results
     saturation_agg = aggregate_saturation_results(saturation_results)
-    
+
     return {
         'block_entropy_k2': block_entropies_k2,
         'entropy_rate': entropy_rates,

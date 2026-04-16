@@ -2,10 +2,10 @@
 # Copyright (c) 2025-present, symseq Contributors
 
 """Console script for symseq."""
-import symseq
-
 import typer
 from rich.console import Console
+
+import symseq
 
 app = typer.Typer()
 console = Console()
@@ -17,7 +17,7 @@ def main():
     console.print("Replace this message by putting your code into "
                "symseq.cli.main")
     console.print("See Typer documentation at https://typer.tiangolo.com/")
-    
+
 
 
 if __name__ == "__main__":

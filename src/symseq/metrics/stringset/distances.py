@@ -3,11 +3,12 @@
 
 """Distance metrics for string sets."""
 
-import numpy as np
-import nltk
 from gzip import compress
-from tqdm import tqdm
+
+import nltk
+import numpy as np
 from joblib import Parallel, delayed
+from tqdm import tqdm
 
 
 def hamming_distance(seq1: list[str], seq2: list[str]) -> int:

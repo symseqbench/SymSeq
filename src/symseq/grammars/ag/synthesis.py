@@ -7,10 +7,11 @@ synthesis.py
 This module generates regular grammars with a given number of nodes and a given target complexity.
 """
 
-import numpy as np
-import networkx as nx
-import time as t
 import copy
+import time as t
+
+import networkx as nx
+import numpy as np
 
 from symseq.utils.io import get_logger
 

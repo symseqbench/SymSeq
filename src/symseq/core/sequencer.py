@@ -7,8 +7,9 @@ Implements abstract/base class used to generate symbolic sequences.
 """
 
 # standard imports
-import numpy as np
 from abc import ABC
+
+import numpy as np
 
 # local imports
 from ..utils.io import get_logger, save_pickle

@@ -2,13 +2,13 @@
 # Copyright (c) 2025-present, symseq Contributors
 
 from concurrent.futures import ProcessPoolExecutor, as_completed
-from typing import get_type_hints, get_origin
-
-# internal imports
-from symseq.utils.strtools import string_as_symbols
+from typing import get_origin, get_type_hints
 
 # from symseq.metrics import complexity
 from symseq import metrics
+
+# internal imports
+from symseq.utils.strtools import string_as_symbols
 
 
 # @staticmethod

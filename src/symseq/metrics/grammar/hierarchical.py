@@ -3,12 +3,13 @@
 
 """Hierarchical structure detection via MI decay analysis."""
 
-import numpy as np
-from scipy import special, optimize
 from collections import Counter
-from typing import Dict, Tuple, List
-from tqdm import tqdm
+from typing import Dict, List, Tuple
+
+import numpy as np
 from joblib import Parallel, delayed
+from scipy import optimize, special
+from tqdm import tqdm
 
 
 def grassberger_entropy(sequence: list[str]) -> float:
@@ -154,14 +155,14 @@ def mi_decay_analysis(
     max_mi = np.max(mi_adjusted[mi_adjusted > 0]) if np.any(mi_adjusted > 0) else 0
     convergence_threshold = max(0.05 * max_mi, 0.005)  # 5% of max or 0.005 bits (stricter)
     window_size = 3  # Require 3 consecutive low points (less conservative)
-    
+
     convergence_dist = 0
     for i in range(len(mi_adjusted) - window_size + 1):
         if np.all(mi_adjusted[i:i+window_size] < convergence_threshold):
             # Return the distance just before the convergence window
             convergence_dist = int(distances[max(0, i-1)]) if i > 0 else 0
             break
-    
+
     # Use the more conservative (smaller) of the two methods
     # CI-based can be too liberal due to noise, convergence-based is more robust
     if convergence_dist > 0 and max_sig_dist_ci > 0:
@@ -198,7 +199,7 @@ def _compute_shuffle_mi(sequence, distances, seed):
     rng = np.random.default_rng(seed)
     permuted = sequence.copy()
     rng.shuffle(permuted)
-    
+
     mi_values = np.zeros(len(distances))
     for i, d in enumerate(distances):
         x_seq, y_seq = _get_distance_pairs(permuted, d)
@@ -272,9 +273,9 @@ def mi_decay_analysis_parallel(
         base_rng = np.random.default_rng(random_state)
     else:
         base_rng = np.random.default_rng()
-    
+
     seeds = base_rng.integers(0, 2**31, size=n_shuffles)
-    
+
     max_dist = min(max_distance, len(sequence) - 1)
     distances = np.arange(1, max_dist + 1)
 
@@ -295,9 +296,9 @@ def mi_decay_analysis_parallel(
         delayed(_compute_shuffle_mi)(sequence, distances, seed)
         for seed in tqdm(seeds, desc="Computing shuffled baseline (parallel)", disable=not verbose)
     )
-    
+
     mi_shuffled_all = np.array(mi_shuffled_list).T  # Shape: (n_distances, n_shuffles)
-    
+
     mi_baseline = np.mean(mi_shuffled_all, axis=1)
     mi_baseline_std = np.std(mi_shuffled_all, axis=1)
     mi_adjusted = mi_values - mi_baseline
@@ -315,13 +316,13 @@ def mi_decay_analysis_parallel(
     max_mi = np.max(mi_adjusted[mi_adjusted > 0]) if np.any(mi_adjusted > 0) else 0
     convergence_threshold = max(0.05 * max_mi, 0.005)
     window_size = 3
-    
+
     convergence_dist = 0
     for i in range(len(mi_adjusted) - window_size + 1):
         if np.all(mi_adjusted[i:i+window_size] < convergence_threshold):
             convergence_dist = int(distances[max(0, i-1)]) if i > 0 else 0
             break
-    
+
     # Use the more conservative (smaller) of the two methods
     if convergence_dist > 0 and max_sig_dist_ci > 0:
         max_sig_dist = min(convergence_dist, max_sig_dist_ci)
@@ -366,7 +367,7 @@ def _mutual_information(x_seq: list[str], y_seq: list[str]) -> float:
     return h_x + h_y - h_xy
 
 
-def _get_distance_pairs(sequence: list[str], distance: int) -> Tuple[list, list]:
+def _get_distance_pairs(sequence: list[str], distance: int) -> tuple[list, list]:
     """Get pairs of elements separated by specified distance."""
     if distance <= 0 or distance >= len(sequence):
         return [], []
@@ -460,7 +461,7 @@ def _compare_decay_models(distances: np.ndarray, mi_adjusted: np.ndarray, max_si
     min_points_for_fitting = 10
     fit_range = max(max_sig_dist, min_points_for_fitting)
     fit_range = min(fit_range, len(distances))  # Don't exceed available data
-    
+
     max_idx = np.where(distances <= fit_range)[0]
     x_data = distances[max_idx].astype(float)
     y_data = mi_adjusted[max_idx]

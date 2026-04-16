@@ -10,13 +10,15 @@ Author: Renato Duarte, Barna Zajzon
 """
 
 from __future__ import annotations
+
 import matplotlib
 import matplotlib.axes
 from sklearn.preprocessing import normalize
 
+from symseq.utils.io import get_logger
+
 # from symseq.grammars.ag import ArtificialGrammar
 from symseq.utils.strtools import chunk_transitions
-from symseq.utils.io import get_logger
 from symseq.viz.mc_graph import MarkovChain, Node
 
 logger = get_logger(__name__)
@@ -32,7 +34,7 @@ def draw_graph(g, max_lift=1, save="./last.png"):
         n_frequencies = normalize(frequencies, axis=1, norm="l1")
 
         mc = MarkovChain(n_frequencies, list(frequencies.columns), title=r"$P_{freq}$")
-        label = save.split(".")[-2] + "_lift{}".format(lift) + save.split(".")[-1]
+        label = save.split(".")[-2] + f"_lift{lift}" + save.split(".")[-1]
         mc.draw(label)
 
 

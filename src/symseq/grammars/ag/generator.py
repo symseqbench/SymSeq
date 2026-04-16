@@ -9,11 +9,12 @@ Util functions to randomly generate grammars that satisfy certain constraints.
 
 # TODO consider sampling-based generation
 
-import numpy as np
-import random
-import networkx as nx
-from sklearn.preprocessing import normalize
 import copy
+import random
+
+import networkx as nx
+import numpy as np
+from sklearn.preprocessing import normalize
 
 from symseq.core import state
 from symseq.core.state import State
@@ -223,8 +224,8 @@ def init_graph(states_no_eos, start_states, terminal_states, transition_density,
     if m < n:
         # raise ValueError("Need at least n edges for strong connectivity.")
         raise RuntimeError(
-            f"Could not generate a valid transition matrix (strongly connected graph)"
-            f"with the provided density (too low?)."
+            "Could not generate a valid transition matrix (strongly connected graph)"
+            "with the provided density (too low?)."
         )
     if m > n * (n - 1):
         raise ValueError("Too many edges: maximum is n*(n-1).")

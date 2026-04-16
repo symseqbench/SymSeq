@@ -10,18 +10,19 @@ for subsequent processing.
 """
 
 import os
+from dataclasses import dataclass
 
 # import toml
 import toml
 import yaml
-from dataclasses import dataclass
+
+from symseq import tasks
 
 # internal imports
 from symseq.grammars.ag import ArtificialGrammar
 from symseq.grammars.nad import NonAdjacentDependencies
 from symseq.utils.io import get_logger
 from symseq.utils.strtools import clean_string_set, concatenate_string_set
-from symseq import tasks
 
 logger = get_logger(__name__)
 

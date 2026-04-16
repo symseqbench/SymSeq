@@ -71,7 +71,7 @@ class NonAdjacentDependencies(SymbolicSequencer):
         verbose : bool, optional
             If True, logs the generation process. Default is True.
         """
-        logger.info(f"Creating NonAdjacentDependencies instance...")
+        logger.info("Creating NonAdjacentDependencies instance...")
 
         self.label = label
 
@@ -380,7 +380,7 @@ class CrossedNonAdjacentDependencies(SymbolicSequencer):
         verbose : bool, optional
             If True, logs the generation process. Default is True.
         """
-        logger.info(f"Creating CrossedNonAdjacentDependencies instance...")
+        logger.info("Creating CrossedNonAdjacentDependencies instance...")
 
         self.label = label
 
@@ -579,7 +579,7 @@ class NestedNonAdjacentDependencies(SymbolicSequencer):
         verbose : bool, optional
             If True, logs the generation process. Default is True.
         """
-        logger.info(f"Creating Nested NonAdjacentDependencies instance...")
+        logger.info("Creating Nested NonAdjacentDependencies instance...")
 
         self.label = label
 

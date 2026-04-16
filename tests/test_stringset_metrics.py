@@ -1,19 +1,19 @@
 """Tests for string-set level metrics."""
 
-import pytest
 import numpy as np
+import pytest
 
 from symseq.metrics.stringset import (
-    hamming_distance,
-    edit_distance,
-    normalized_compression_distance,
-    pairwise_distances,
-    mutual_information_strings,
-    normalized_mutual_information,
-    string_set_entropy,
-    global_acs_knowlton96,
-    anchor_acs_knowlton96,
     acs_bailey2008,
+    anchor_acs_knowlton96,
+    edit_distance,
+    global_acs_knowlton96,
+    hamming_distance,
+    mutual_information_strings,
+    normalized_compression_distance,
+    normalized_mutual_information,
+    pairwise_distances,
+    string_set_entropy,
 )
 
 

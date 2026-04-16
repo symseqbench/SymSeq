@@ -4,8 +4,9 @@
 """Compression-based complexity metrics."""
 
 from gzip import compress
+from typing import Dict, List
+
 import numpy as np
-from typing import List, Dict
 from joblib import Parallel, delayed
 
 
@@ -96,9 +97,9 @@ def _compute_compression_single(seq):
         return None, None
 
 
-def compute_compression_metrics_ensemble(sequences: List[list[str]],
+def compute_compression_metrics_ensemble(sequences: list[list[str]],
                                          min_sequence_length: int = 10,
-                                         n_jobs: int = 1) -> Dict:
+                                         n_jobs: int = 1) -> dict:
     """
     Compute compression-based metrics on an ensemble of sequences.
     
@@ -121,14 +122,14 @@ def compute_compression_metrics_ensemble(sequences: List[list[str]],
     """
     # Filter sequences by minimum length
     valid_sequences = [seq for seq in sequences if len(seq) >= min_sequence_length]
-    
+
     if not valid_sequences:
         return {
             'compressibility': [],
             'lzw_complexity': [],
             'n_sequences_analyzed': 0
         }
-    
+
     # Compute metrics for each sequence
     if n_jobs != 1:
         # Parallel computation
@@ -141,20 +142,20 @@ def compute_compression_metrics_ensemble(sequences: List[list[str]],
         # Sequential computation (original behavior)
         compressibilities = []
         lzw_complexities = []
-        
+
         for seq in valid_sequences:
             try:
                 comp = compressibility(seq)
                 compressibilities.append(comp)
             except Exception:
                 pass
-            
+
             try:
                 lzw = lzw_complexity(seq, normalized=True)
                 lzw_complexities.append(lzw)
             except Exception:
                 pass
-    
+
     return {
         'compressibility': compressibilities,
         'lzw_complexity': lzw_complexities,

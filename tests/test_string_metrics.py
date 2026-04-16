@@ -1,16 +1,16 @@
 """Tests for string-level metrics."""
 
-import pytest
 import numpy as np
+import pytest
 
 from symseq.metrics.string import (
-    entropy,
     block_entropy,
-    entropy_rate,
-    emc,
     compressibility,
-    lzw_complexity,
+    emc,
+    entropy,
+    entropy_rate,
     linguistic_complexity,
+    lzw_complexity,
     permutation_entropy,
 )
 

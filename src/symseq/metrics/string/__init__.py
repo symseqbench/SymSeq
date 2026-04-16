@@ -8,17 +8,17 @@ This module provides metrics that quantify the complexity of individual strings
 or concatenated string sets.
 """
 
+from .compression import compressibility, compute_compression_metrics_ensemble, lzw_complexity
 from .entropy import (
-    entropy, 
-    block_entropy, 
-    entropy_rate, 
-    emc, 
-    detect_saturation_point,
-    compute_adaptive_max_k,
     aggregate_saturation_results,
-    compute_entropy_metrics_ensemble
+    block_entropy,
+    compute_adaptive_max_k,
+    compute_entropy_metrics_ensemble,
+    detect_saturation_point,
+    emc,
+    entropy,
+    entropy_rate,
 )
-from .compression import compressibility, lzw_complexity, compute_compression_metrics_ensemble
 from .linguistic import linguistic_complexity
 from .regularity import permutation_entropy
 

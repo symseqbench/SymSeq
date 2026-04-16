@@ -1,7 +1,7 @@
 """Tests for backward compatibility with old API."""
 
-import pytest
 import numpy as np
+import pytest
 
 
 class TestLegacyImports:
@@ -48,7 +48,7 @@ class TestLegacyImports:
         assert "A" in top
 
     def test_acs_imports(self):
-        from symseq.metrics import global_acs_knowlton96, anchor_acs_knowlton96, acs_bailey2008
+        from symseq.metrics import acs_bailey2008, anchor_acs_knowlton96, global_acs_knowlton96
 
         train = [["A", "B"]] * 10
         test = [["A", "B"]]

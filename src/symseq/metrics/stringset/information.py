@@ -3,11 +3,12 @@
 
 """Information-theoretic metrics for string sets."""
 
-import numpy as np
 import warnings
 from collections import Counter
-from tqdm import tqdm
+
+import numpy as np
 from joblib import Parallel, delayed
+from tqdm import tqdm
 
 from symseq.metrics.string import entropy
 
@@ -159,7 +160,7 @@ def pairwise_mutual_information(
 
     # Calculate total number of pairs (including diagonal)
     total_pairs = T * (T + 1) // 2
-    
+
     with tqdm(total=total_pairs, desc=f"Computing {metric.upper()}") as pbar:
         for i in range(T):
             for j in range(i, T):
@@ -229,18 +230,18 @@ def pairwise_mutual_information_parallel(
 
     # Generate all pairs including diagonal
     pairs = [(i, j) for i in range(T) for j in range(i, T)]
-    
+
     # Parallel computation
     results = Parallel(n_jobs=n_jobs, backend='loky')(
         delayed(_compute_mi_pair)(i, j, string_set, mi_func, method, kwargs)
         for i, j in tqdm(pairs, desc=f"Computing {metric.upper()} (parallel)")
     )
-    
+
     # Fill matrix
     for i, j, mi_val in results:
         MI_matrix[i, j] = mi_val
         MI_matrix[j, i] = mi_val
-    
+
     return MI_matrix
 
 

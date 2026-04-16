@@ -3,8 +3,9 @@
 
 """Associative Chunk Strength (ACS) metrics."""
 
-import numpy as np
 from collections import Counter
+
+import numpy as np
 
 from symseq.utils.strtools import chunk_ngrams_string_set
 

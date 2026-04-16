@@ -466,7 +466,7 @@ Markov_2nd_Order = {
         ("A(0)", "B(1)", 0.4),  # Start with A, emit B, now have "A" history
         ("B(0)", "A(2)", 0.3),  # Start with B, emit A, now have "B" history
         ("B(0)", "B(2)", 0.7),  # Start with B, emit B, now have "B" history
-        
+
         # From 1-symbol history to 2-symbol history
         ("A(1)", "A(3)", 0.7),  # After A, emit A -> have "AA" history
         ("A(1)", "B(3)", 0.3),  # After A, emit B -> have "AA" history
@@ -476,7 +476,7 @@ Markov_2nd_Order = {
         ("A(2)", "B(5)", 0.8),  # After B, emit B -> have "BA" history
         ("B(2)", "A(6)", 0.5),  # After B, emit A -> have "BB" history
         ("B(2)", "B(6)", 0.5),  # After B, emit B -> have "BB" history
-        
+
         # 2nd-order transitions: P(X_t | X_{t-2}=A, X_{t-1}=A)
         ("A(3)", "A(3)", 0.8),  # AA context, emit A, stay in AA
         ("A(3)", "B(3)", 0.1),  # AA context, emit B, stay in AA
@@ -484,7 +484,7 @@ Markov_2nd_Order = {
         ("B(3)", "A(4)", 0.3),  # AA context, emit A, move to AB
         ("B(3)", "B(4)", 0.6),  # AA context, emit B, move to AB
         ("B(3)", "#", 0.1),     # AA context, terminate
-        
+
         # 2nd-order transitions: P(X_t | X_{t-2}=A, X_{t-1}=B)
         ("A(4)", "A(5)", 0.2),  # AB context, emit A, move to BA
         ("A(4)", "B(5)", 0.7),  # AB context, emit B, move to BA
@@ -492,7 +492,7 @@ Markov_2nd_Order = {
         ("B(4)", "A(6)", 0.4),  # AB context, emit A, move to BB
         ("B(4)", "B(6)", 0.5),  # AB context, emit B, move to BB
         ("B(4)", "#", 0.1),     # AB context, terminate
-        
+
         # 2nd-order transitions: P(X_t | X_{t-2}=B, X_{t-1}=A)
         ("A(5)", "A(3)", 0.6),  # BA context, emit A, move to AA
         ("A(5)", "B(3)", 0.3),  # BA context, emit B, move to AA
@@ -500,7 +500,7 @@ Markov_2nd_Order = {
         ("B(5)", "A(4)", 0.3),  # BA context, emit A, move to AB
         ("B(5)", "B(4)", 0.6),  # BA context, emit B, move to AB
         ("B(5)", "#", 0.1),     # BA context, terminate
-        
+
         # 2nd-order transitions: P(X_t | X_{t-2}=B, X_{t-1}=B)
         ("A(6)", "A(5)", 0.4),  # BB context, emit A, move to BA
         ("A(6)", "B(5)", 0.5),  # BB context, emit B, move to BA
