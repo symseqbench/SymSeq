@@ -49,6 +49,7 @@ from .stringset.distances import (
     hamming_distance,
     pairwise_distances,
     string_similarity,
+    # normalized_compression_distance,
 )
 
 __version__ = "0.0.1"
