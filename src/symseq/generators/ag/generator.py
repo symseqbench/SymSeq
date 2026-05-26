@@ -18,7 +18,7 @@ from sklearn.preprocessing import normalize
 
 from symseq.core import state
 from symseq.core.state import State
-from symseq.grammars.ag.synthesis import generate_grammar_with_target_te_complexity
+from symseq.generators.ag.synthesis import generate_grammar_with_target_te_complexity
 from symseq.utils.io import get_logger
 
 logger = get_logger(__name__)
@@ -397,7 +397,7 @@ def grammar_with_complexity(
     **synthesis_kwargs,
 ):
     """
-    Thin wrapper for `symseq.grammars.ag.synthesis.generate_grammar` to generate a grammar with a target TE complexity.
+    Thin wrapper for `symseq.generators.ag.synthesis.generate_grammar` to generate a grammar with a target TE complexity.
     """
     if transition_density and "p_mean" in synthesis_kwargs:
         if transition_density != synthesis_kwargs["p_mean"]:

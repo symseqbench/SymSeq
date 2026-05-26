@@ -7,7 +7,7 @@ Comprehensive test suite for the DyckGenerator class.
 import numpy as np
 import pytest
 
-from symseq.grammars.dyck import DyckGenerator
+from symseq.generators.dyck import DyckGenerator
 
 
 class TestInitialization:
@@ -648,6 +648,87 @@ class TestIntegration:
 
         assert valid1 == valid2
         assert illegal1 == illegal2
+
+
+class TestTrialAPI:
+    """Tests for the Trial-based API (generate_trial / draw_trial)."""
+
+    def test_generate_trial_returns_trial(self):
+        from symseq.trial import Trial, Target
+        gen = DyckGenerator(k=2, mode="stack", rng=np.random.default_rng(42))
+        trial = gen.generate_trial()
+        assert isinstance(trial, Trial)
+        assert len(trial.symbols) > 0
+        assert gen._is_valid_dyck(trial.symbols)
+        assert isinstance(trial.targets["grammaticality"], Target)
+
+    def test_grammaticality_target_true_by_default(self):
+        gen = DyckGenerator(k=2, mode="stack", rng=np.random.default_rng(42))
+        trial = gen.generate_trial()
+        gt = trial.targets["grammaticality"]
+        assert gt.kind == "per_trial"
+        assert gt.values is True
+        assert gt.mask is None
+
+    def test_grammaticality_target_false_for_nongrammatical(self):
+        gen = DyckGenerator(k=2, mode="stack", rng=np.random.default_rng(42))
+        trial = gen.generate_trial(grammatical=False)
+        assert trial.targets["grammaticality"].values is False
+        assert not gen._is_valid_dyck(trial.symbols)
+
+    def test_states_is_none_for_dyck(self):
+        gen = DyckGenerator(k=2, mode="stack", rng=np.random.default_rng(42))
+        trial = gen.generate_trial()
+        assert trial.states is None
+
+    def test_meta_carries_paradigm_info(self):
+        gen = DyckGenerator(k=3, mode="uniform", target_pairs=4, rng=np.random.default_rng(42))
+        trial = gen.generate_trial()
+        assert trial.meta["paradigm"] == "Dyck"
+        assert trial.meta["k"] == 3
+        assert trial.meta["mode"] == "uniform"
+        assert trial.meta["length"] == len(trial.symbols)
+
+    def test_generate_trials_batch(self):
+        from symseq.trial import Trial
+        gen = DyckGenerator(k=2, mode="stack", rng=np.random.default_rng(42))
+        trials = gen.generate_trials(n=4)
+        assert len(trials) == 4
+        assert all(isinstance(t, Trial) for t in trials)
+        assert all(gen._is_valid_dyck(t.symbols) for t in trials)
+
+    def test_draw_trial_and_draw_batch_protocol(self):
+        from symseq.trial import Trial
+        from symseq.trial_source import TrialSource
+        gen = DyckGenerator(k=2, mode="stack", rng=np.random.default_rng(42))
+        assert isinstance(gen, TrialSource)
+        t = gen.draw_trial()
+        assert isinstance(t, Trial)
+        batch = gen.draw_batch(3)
+        assert len(batch) == 3 and all(isinstance(b, Trial) for b in batch)
+
+    def test_iter_trials_yields_trials(self):
+        from itertools import islice
+        from symseq.trial import Trial
+        gen = DyckGenerator(k=2, mode="stack", rng=np.random.default_rng(42))
+        first_five = list(islice(gen.iter_trials(), 5))
+        assert len(first_five) == 5
+        assert all(isinstance(t, Trial) for t in first_five)
+
+    def test_same_seed_reproducible_trial(self):
+        gen1 = DyckGenerator(k=2, mode="stack", rng=np.random.default_rng(2026))
+        gen2 = DyckGenerator(k=2, mode="stack", rng=np.random.default_rng(2026))
+        t1 = gen1.generate_trial()
+        t2 = gen2.generate_trial()
+        assert t1.symbols == t2.symbols
+
+    def test_registry_builds_dyck(self):
+        from symseq.generators.registry import build, registered_names
+        from symseq.trial import Trial
+        assert "Dyck" in registered_names()
+        gen = build("Dyck", k=2, mode="stack", rng=np.random.default_rng(42))
+        assert isinstance(gen, DyckGenerator)
+        assert isinstance(gen.generate_trial(), Trial)
 
 
 if __name__ == "__main__":

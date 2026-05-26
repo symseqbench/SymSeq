@@ -8,11 +8,13 @@ Implements abstract/base class used to generate symbolic sequences.
 
 # standard imports
 from abc import ABC
+from typing import Iterator
 
 import numpy as np
 
 # local imports
 from ..utils.io import get_logger, save_pickle
+from ..trial import Trial
 
 logger = get_logger(__name__)
 
@@ -119,6 +121,34 @@ class SymbolicSequencer(ABC):
         alphabet_arr = np.array(self.alphabet, dtype=object)  # avoid conversion to np.str_ type
         random_sequence = list(self.rng.choice(alphabet_arr, length, replace=replace))
         return random_sequence
+
+    # ============================= Trial-based API =============================
+    # Native generation: subclasses override generate_trial to emit a Trial
+    # populated with intrinsic targets. The Protocol methods (draw_trial,
+    # draw_batch) wrap this so callers can be source-agnostic.
+
+    def generate_trial(self, **params) -> Trial:
+        """Generate one Trial. Subclasses must override."""
+        raise NotImplementedError(
+            f"{type(self).__name__} has not implemented the Trial-based "
+            f"generate_trial API yet."
+        )
+
+    def generate_trials(self, n: int, **params) -> list[Trial]:
+        """Generate n independent Trials."""
+        return [self.generate_trial(**params) for _ in range(n)]
+
+    def iter_trials(self, **params) -> Iterator[Trial]:
+        """Infinite iterator of fresh Trials (online mode)."""
+        while True:
+            yield self.generate_trial(**params)
+
+    # --- TrialSource protocol methods ---
+    def draw_trial(self) -> Trial:
+        return self.generate_trial()
+
+    def draw_batch(self, n: int) -> list[Trial]:
+        return self.generate_trials(n)
 
     def save(self, file_name=None, file_path=None):
         """

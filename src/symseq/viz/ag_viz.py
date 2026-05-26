@@ -17,7 +17,7 @@ from sklearn.preprocessing import normalize
 
 from symseq.utils.io import get_logger
 
-# from symseq.grammars.ag import ArtificialGrammar
+# from symseq.generators.ag import ArtificialGrammar
 from symseq.utils.strtools import chunk_transitions
 from symseq.viz.mc_graph import MarkovChain, Node
 
@@ -30,7 +30,7 @@ def draw_graph(g, max_lift=1, save="./last.png"):
     mc.draw()
 
     for lift in range(max_lift):
-        frequencies = chunk_transitions(g.generate_sequence(), lift + 1, return_labels=True)
+        frequencies = chunk_transitions(g.generate_trial(), lift + 1, return_labels=True)
         n_frequencies = normalize(frequencies, axis=1, norm="l1")
 
         mc = MarkovChain(n_frequencies, list(frequencies.columns), title=r"$P_{freq}$")
@@ -72,7 +72,7 @@ def plot_grammar(
         mc.draw(grammar.terminal_states, grammar.eos, ax=ax, save=save)
     else:
         raise NotImplementedError("Lifting not implemented yet")
-        frequencies = chunk_transitions(grammar.generate_sequence(), lift + 1, return_labels=True)
+        frequencies = chunk_transitions(grammar.generate_trial(), lift + 1, return_labels=True)
         n_frequencies = normalize(frequencies, axis=1, norm="l1")
 
         mc = MarkovChain(n_frequencies, list(frequencies.columns), title=r"$P_{freq}$", fontsize=28, node_fontsize=32)

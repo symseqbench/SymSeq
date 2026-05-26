@@ -22,8 +22,10 @@ import pandas as pd
 # internal imports
 from symseq.core.sequencer import SymbolicSequencer
 from symseq.core.state import State
-from symseq.grammars.ag import agl_dataset, presets, utils
-from symseq.grammars.ag.generator import generate_random_grammar, grammar_with_complexity
+from symseq.generators.ag import agl_dataset, presets, utils
+from symseq.generators.ag.generator import generate_random_grammar, grammar_with_complexity
+from symseq.generators.registry import register
+from symseq.trial import Target, Trial
 from symseq.utils.io import get_logger, save_pickle
 from symseq.utils.strtools import string_as_symbols
 from symseq.viz.ag_viz import plot_grammar
@@ -31,6 +33,7 @@ from symseq.viz.ag_viz import plot_grammar
 logger = get_logger(__name__)
 
 
+@register("ArtificialGrammar")
 class ArtificialGrammar(SymbolicSequencer):
     """
     Symbolic sequence with transition rules specified by a directed graph, along with corresponding transition
@@ -864,6 +867,61 @@ class ArtificialGrammar(SymbolicSequencer):
             nongramm_string = string_as_symbols(nongramm_string)
 
         return nongramm_string
+
+    # ============================ Trial-based API ============================
+
+    def generate_trial(
+        self,
+        min_length: int = 0,
+        max_length: int = int(1e4),
+        length_range: tuple | None = None,
+        remove_eos: bool = True,
+        grammatical: bool = True,
+        n_deviants: int = 1,
+        max_iter: int = int(1e3),
+        **kwargs,
+    ) -> Trial:
+        """Generate one Trial with both symbols and the state-indexed view.
+
+        - ``Trial.symbols``: bare alphabet sequence (e.g. ['A', 'B', 'A']).
+        - ``Trial.states``: state-indexed view (e.g. ['A0', 'B1', 'A2']).
+        - ``Trial.targets["grammaticality"]``: per-trial bool — True for samples
+          drawn from the grammar, False for samples corrupted via ``add_deviant``.
+        """
+        if grammatical:
+            states = self.generate_string(
+                min_length=min_length,
+                max_length=max_length,
+                length_range=length_range,
+                remove_eos=remove_eos,
+                as_states=True,
+                max_iter=max_iter,
+            )
+            is_gram = True
+        else:
+            states = self.generate_nongrammatical_string(
+                n_deviants=n_deviants,
+                min_length=min_length,
+                max_length=max_length,
+                length_range=length_range,
+                remove_eos=remove_eos,
+                as_states=True,
+                max_iter=max_iter,
+            )
+            is_gram = False
+
+        symbols = string_as_symbols(states)
+
+        targets = {
+            "grammaticality": Target(values=is_gram, mask=None, kind="per_trial"),
+        }
+        meta = {
+            "paradigm": "ArtificialGrammar",
+            "label": self.label,
+            "n_states": len(self.states),
+            "length": len(symbols),
+        }
+        return Trial(symbols=symbols, states=states, targets=targets, meta=meta)
 
     def generate_string_set(
         self,

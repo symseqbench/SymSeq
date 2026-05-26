@@ -14,7 +14,7 @@ from multiprocessing import cpu_count
 import numpy as np
 import pandas as pd
 
-from symseq.grammars.ag.utils import all_paths_as_strings, process_feature
+from symseq.generators.ag.utils import all_paths_as_strings, process_feature
 
 # internal imports
 from symseq.utils.io import get_logger

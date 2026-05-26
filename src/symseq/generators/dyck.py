@@ -14,10 +14,15 @@ from typing import Dict, List, Literal, Optional, Sequence
 
 import numpy as np
 
+from symseq.core.sequencer import SymbolicSequencer
+from symseq.generators.registry import register
+from symseq.trial import Target, Trial
+
 Mode = Literal["stack", "uniform"]
 
 
-class DyckGenerator:
+@register("Dyck")
+class DyckGenerator(SymbolicSequencer):
     """
     Dyck-language generator with variable-length (stack) and fixed-length uniform modes.
 
@@ -174,6 +179,10 @@ class DyckGenerator:
                 raise ValueError("`max_depth` must be a positive integer or None.")
 
         self._compute_alphabet()
+
+        # Initialize SymbolicSequencer base with the computed alphabet and rng.
+        # This sets self.label / self.alphabet_size / re-confirms self.alphabet and self.rng.
+        super().__init__(label="Dyck", alphabet=self.alphabet, rng=self.rng, verbose=False)
 
     def _generate_default_parentheses(self, k: int) -> dict[str, str]:
         """
@@ -389,6 +398,50 @@ class DyckGenerator:
             )
             for _ in range(n)
         ]
+
+    # ============================ Trial-based API ============================
+
+    def generate_trial(
+        self,
+        add_distractors: bool = False,
+        n_distractors: int = 0,
+        max_attempts: int = 1000,
+        grammatical: bool = True,
+        **kwargs,
+    ) -> Trial:
+        """Generate one Trial.
+
+        Trial.targets["grammaticality"] is a per-trial bool — True for a valid
+        k-Dyck string, False if produced by the non-grammatical corruption
+        procedure.
+        """
+        if grammatical:
+            symbols = self.generate_string(
+                add_distractors=add_distractors,
+                n_distractors=n_distractors,
+                max_attempts=max_attempts,
+            )
+            is_gram = True
+        else:
+            symbols = self.generate_nongrammatical_strings(
+                n=1,
+                add_distractors=add_distractors,
+                n_distractors=n_distractors,
+                max_attempts=max_attempts,
+                **kwargs,
+            )[0]
+            is_gram = False
+
+        targets = {
+            "grammaticality": Target(values=is_gram, mask=None, kind="per_trial"),
+        }
+        meta = {
+            "paradigm": "Dyck",
+            "k": self.k,
+            "mode": self.mode,
+            "length": len(symbols),
+        }
+        return Trial(symbols=symbols, states=None, targets=targets, meta=meta)
 
     def generate_nongrammatical_strings(
         self,

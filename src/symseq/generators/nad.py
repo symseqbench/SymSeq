@@ -12,11 +12,14 @@ from more_itertools import collapse
 
 # internal imports
 from symseq.core.sequencer import SymbolicSequencer
+from symseq.generators.registry import register
+from symseq.trial import Target, Trial
 from symseq.utils.io import get_logger, save_pickle
 
 logger = get_logger(__name__)
 
 
+@register("NonAdjacentDependencies")
 class NonAdjacentDependencies(SymbolicSequencer):
     """
     Generate input and output sequences for tasks involving non-adjacent dependencies.
@@ -182,6 +185,42 @@ class NonAdjacentDependencies(SymbolicSequencer):
             raise NotImplementedError("Generator not implemented")
         else:
             return list(collapse(string))
+
+    # ============================ Trial-based API ============================
+
+    def generate_trial(
+        self,
+        filler_len: int = 1,
+        randomize_fillers: bool = False,
+        **kwargs,
+    ) -> Trial:
+        """Generate one NAD Trial.
+
+        Always produces a grammatical frame (matching dependents A_i...B_i).
+        Targets:
+        - ``grammaticality``: per-trial bool (always True for this method)
+        - ``pair_index``: per-trial int — index of the dependency pair used
+        """
+        symbols = self.generate_string(filler_len=filler_len, randomize_fillers=randomize_fillers)
+        # recover which dependency pair was used (first and last tokens)
+        pair = (symbols[0], symbols[-1])
+        try:
+            pair_index = self.dependency_pairs.index(pair)
+        except ValueError:
+            pair_index = None  # defensive — should not happen for grammatical strings
+
+        targets = {
+            "grammaticality": Target(values=True, mask=None, kind="per_trial"),
+            "pair_index": Target(values=pair_index, mask=None, kind="per_trial"),
+        }
+        meta = {
+            "paradigm": "NonAdjacentDependencies",
+            "label": self.label,
+            "dependency_length": filler_len,
+            "n_deps": self.n_deps,
+            "length": len(symbols),
+        }
+        return Trial(symbols=symbols, states=None, targets=targets, meta=meta)
 
     # TODO rename function
     def generate_vocabulary(self, filler_len: int | None = None, generator: bool = False, verbose: bool = True):

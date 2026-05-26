@@ -11,12 +11,15 @@ from typing import Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
-from symseq.grammars.ag import ArtificialGrammar
+from symseq.generators.ag import ArtificialGrammar
+from symseq.generators.registry import register
+from symseq.trial import Target, Trial
 from symseq.utils.io import get_logger
 
 logging = get_logger(__name__)
 
 
+@register("nAX")
 class nAX(ArtificialGrammar):
     """
     n-AX (conditional one-back) as a regular grammar.
@@ -378,6 +381,24 @@ class nAX(ArtificialGrammar):
         # currently all generated strings are grammatical
         string_set = [self.generate_string(**kwargs) for _ in range(n_samples)]
         return string_set
+
+    # ============================ Trial-based API ============================
+
+    def generate_trial(self, *args, **kwargs) -> Trial:
+        """Generate one nAX Trial.
+
+        Augments the parent ArtificialGrammar Trial with nAX-specific intrinsic
+        per-trial targets:
+        - ``nax_label``: trial-type label like 'C1->T' (target) or 'C1->L(2)' (lure)
+        - ``is_target``: True if probe matches the context's expected probe
+        """
+        trial = super().generate_trial(*args, **kwargs)
+        label, is_target = self.label_trial(trial.symbols)
+        trial.targets["nax_label"] = Target(values=label, mask=None, kind="per_trial")
+        trial.targets["is_target"] = Target(values=is_target, mask=None, kind="per_trial")
+        trial.meta["paradigm"] = "nAX"
+        trial.meta["n_contexts"] = len(self.contexts)
+        return trial
 
     # ============================== Utilities ==============================
     # TODO This belongs more to the task definition

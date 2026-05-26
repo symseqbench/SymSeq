@@ -30,11 +30,14 @@ from __future__ import annotations
 import numpy as np
 
 from symseq.core.sequencer import SymbolicSequencer
+from symseq.generators.registry import register
+from symseq.trial import Target, Trial
 from symseq.utils.io import get_logger
 
 logger = get_logger(__name__)
 
 
+@register("NBack")
 class NBack(SymbolicSequencer):
     """
     Controlled n-back symbolic sequence generator.
@@ -466,6 +469,41 @@ class NBack(SymbolicSequencer):
             self.generate_string(seq_length=seq_length, **kwargs)
             for _ in range(n_samples)
         ]
+
+    # ============================ Trial-based API ============================
+
+    def generate_trial(self, seq_length: int | None = None, **kwargs) -> Trial:
+        """Generate one Trial with the n-back sequence and intrinsic targets.
+
+        The Trial carries two intrinsic per-token targets:
+        - ``nback_match``: binary (1 = true n-back match, 0 = no match).
+        - ``nback_role``: multiclass role per the multiclass labeling scheme
+          (0 = no match, 1 = true match, 2.. = lure of offset ``lure_offsets[code-2]``).
+
+        Burn-in positions (i < n) are masked out via ``Target.mask``.
+        """
+        symbols = self.generate_string(seq_length=seq_length, **kwargs)
+        binary_labels = self.label_sequence(symbols)        # -1 at burn-in, else 0/1
+        role_labels = self.label_sequence_multiclass(symbols)  # -1 at burn-in, else 0/1/2..
+
+        valid_mask = [i >= self.n for i in range(len(symbols))]
+
+        match_values = [int(v) if v != -1 else None for v in binary_labels.tolist()]
+        role_values = [int(v) if v != -1 else None for v in role_labels.tolist()]
+
+        targets = {
+            "nback_match": Target(values=match_values, mask=valid_mask, kind="per_token"),
+            "nback_role": Target(values=role_values, mask=valid_mask, kind="per_token"),
+        }
+
+        meta = {
+            "paradigm": "NBack",
+            "n": self.n,
+            "seq_length": len(symbols),
+            "lure_offsets": tuple(self.lure_offsets),
+        }
+
+        return Trial(symbols=symbols, states=None, targets=targets, meta=meta)
 
     # ============================== Labeling ================================
 

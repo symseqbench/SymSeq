@@ -6,7 +6,7 @@ Comprehensive test suite for the NBack class.
 
 import pytest
 import numpy as np
-from symseq.grammars.nback import NBack
+from symseq.generators.nback import NBack
 
 
 class TestInitialization:
@@ -412,3 +412,104 @@ class TestEdgeCases:
         # not deterministic, just check it produced something sensible
         n_match = int((labels == 1).sum())
         assert 0 <= n_match <= 98
+
+
+class TestTrialAPI:
+    """Tests for the Trial-based API (generate_trial / draw_trial)."""
+
+    def test_generate_trial_returns_trial(self):
+        from symseq.trial import Trial, Target
+        gen = NBack(n=2, seq_length=20, alphabet_size=6, seed=42)
+        trial = gen.generate_trial()
+        assert isinstance(trial, Trial)
+        assert len(trial.symbols) == 20
+        assert all(s in gen.alphabet for s in trial.symbols)
+        assert trial.states is None
+        assert isinstance(trial.targets["nback_match"], Target)
+        assert isinstance(trial.targets["nback_role"], Target)
+
+    def test_intrinsic_targets_present(self):
+        gen = NBack(n=2, seq_length=20, alphabet_size=6, seed=42)
+        trial = gen.generate_trial()
+        assert set(trial.targets) == {"nback_match", "nback_role"}
+        for tgt in trial.targets.values():
+            assert tgt.kind == "per_token"
+            assert len(tgt.values) == len(trial.symbols)
+            assert len(tgt.mask) == len(trial.symbols)
+
+    def test_burn_in_positions_masked(self):
+        gen = NBack(n=3, seq_length=20, alphabet_size=6, seed=42)
+        trial = gen.generate_trial()
+        mask = trial.targets["nback_match"].mask
+        # positions 0..n-1 are burn-in; mask is False there
+        assert mask[:3] == [False, False, False]
+        # positions n.. are valid
+        assert all(mask[3:])
+        # burn-in values are None
+        assert trial.targets["nback_match"].values[:3] == [None, None, None]
+
+    def test_nback_match_target_consistency_with_label_sequence(self):
+        gen = NBack(n=2, seq_length=20, alphabet_size=6, seed=42)
+        trial = gen.generate_trial()
+        legacy = gen.label_sequence(trial.symbols)
+        for i, v in enumerate(trial.targets["nback_match"].values):
+            if v is None:
+                assert legacy[i] == -1
+            else:
+                assert v == int(legacy[i])
+
+    def test_meta_carries_paradigm_info(self):
+        gen = NBack(n=2, seq_length=20, alphabet_size=6, seed=42, lure_offsets=(1,), p_lure=0.1)
+        trial = gen.generate_trial()
+        assert trial.meta["paradigm"] == "NBack"
+        assert trial.meta["n"] == 2
+        assert trial.meta["seq_length"] == 20
+        assert trial.meta["lure_offsets"] == (1,)
+
+    def test_seq_length_override(self):
+        gen = NBack(n=2, seq_length=20, alphabet_size=8, seed=42)
+        trial = gen.generate_trial(seq_length=50)
+        assert len(trial.symbols) == 50
+        assert len(trial.targets["nback_match"].values) == 50
+
+    def test_generate_trials_batch(self):
+        from symseq.trial import Trial
+        gen = NBack(n=2, seq_length=15, alphabet_size=6, seed=42)
+        trials = gen.generate_trials(n=4)
+        assert len(trials) == 4
+        assert all(isinstance(t, Trial) for t in trials)
+        assert all(len(t.symbols) == 15 for t in trials)
+
+    def test_draw_trial_and_draw_batch_protocol(self):
+        from symseq.trial import Trial
+        from symseq.trial_source import TrialSource
+        gen = NBack(n=2, seq_length=15, alphabet_size=6, seed=42)
+        assert isinstance(gen, TrialSource)
+        t = gen.draw_trial()
+        assert isinstance(t, Trial)
+        batch = gen.draw_batch(3)
+        assert len(batch) == 3 and all(isinstance(b, Trial) for b in batch)
+
+    def test_iter_trials_yields_trials(self):
+        from itertools import islice
+        from symseq.trial import Trial
+        gen = NBack(n=2, seq_length=15, alphabet_size=6, seed=42)
+        first_five = list(islice(gen.iter_trials(), 5))
+        assert len(first_five) == 5
+        assert all(isinstance(t, Trial) for t in first_five)
+
+    def test_same_seed_reproducible_trial(self):
+        gen1 = NBack(n=2, seq_length=20, alphabet_size=6, seed=2026)
+        gen2 = NBack(n=2, seq_length=20, alphabet_size=6, seed=2026)
+        t1 = gen1.generate_trial()
+        t2 = gen2.generate_trial()
+        assert t1.symbols == t2.symbols
+        assert t1.targets["nback_match"].values == t2.targets["nback_match"].values
+
+    def test_registry_builds_nback(self):
+        from symseq.generators.registry import build, registered_names
+        from symseq.trial import Trial
+        assert "NBack" in registered_names()
+        gen = build("NBack", n=2, seq_length=15, alphabet_size=6, seed=42, verbose=False)
+        assert isinstance(gen, NBack)
+        assert isinstance(gen.generate_trial(), Trial)
