@@ -7,6 +7,7 @@ needing the caller to import each module by hand.
 """
 
 from symseq.generators.ag import ArtificialGrammar  # registers "ArtificialGrammar"
+from symseq.generators.cfg import CFGGenerator  # registers "CFG"
 from symseq.generators.dyck import DyckGenerator  # registers "Dyck"
 from symseq.generators.nax import nAX  # noqa: F401 (registered if @register is added)
 from symseq.generators.nback import NBack  # registers "NBack"
@@ -14,6 +15,7 @@ from symseq.generators.nad import NonAdjacentDependencies  # noqa: F401
 
 __all__ = [
     "ArtificialGrammar",
+    "CFGGenerator",
     "DyckGenerator",
     "nAX",
     "NBack",

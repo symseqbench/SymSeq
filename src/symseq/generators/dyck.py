@@ -114,6 +114,7 @@ class DyckGenerator(SymbolicSequencer):
         distractors: Sequence[str] | None = None,
         n_distractors: int = 2,
         rng: np.random.Generator | None = None,
+        seed: int | None = None,
         uniform_colorize: bool = True,
     ):
         self.k = k
@@ -163,7 +164,7 @@ class DyckGenerator(SymbolicSequencer):
                 )
 
         if self.rng is None:
-            self.rng = np.random.default_rng()
+            self.rng = np.random.default_rng(seed)
 
         if self.mode == "stack":
             if not (0.0 < self.p_open < 0.5):

@@ -144,11 +144,11 @@ class SymbolicSequencer(ABC):
             yield self.generate_trial(**params)
 
     # --- TrialSource protocol methods ---
-    def draw_trial(self) -> Trial:
-        return self.generate_trial()
+    def draw_trial(self, **kwargs) -> Trial:
+        return self.generate_trial(**kwargs)
 
-    def draw_batch(self, n: int) -> list[Trial]:
-        return self.generate_trials(n)
+    def draw_batch(self, n: int, **kwargs) -> list[Trial]:
+        return self.generate_trials(n, **kwargs)
 
     def save(self, file_name=None, file_path=None):
         """

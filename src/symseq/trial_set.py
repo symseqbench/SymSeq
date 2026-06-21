@@ -77,11 +77,12 @@ class TrialSet:
     def alphabet(self) -> list[str]:
         return self.meta.get("alphabet", [])
 
-    def draw_trial(self) -> Trial:
+    def draw_trial(self, **kwargs) -> Trial:
         """Return the next Trial in cursor order from the configured draw split.
 
         Cycles deterministically through the split. Defaults to ``"train"`` if
         present at construction time, otherwise iterates over all trials.
+        kwargs are accepted for protocol compatibility but unused (reads pregenerated set).
         """
         if self._draw_split is not None:
             idxs = self.splits[self._draw_split]
@@ -95,7 +96,7 @@ class TrialSet:
         self._cursor += 1
         return self.trials[i]
 
-    def draw_batch(self, n: int) -> list[Trial]:
+    def draw_batch(self, n: int, **kwargs) -> list[Trial]:
         return [self.draw_trial() for _ in range(n)]
 
     def set_draw_split(self, name: str | None) -> None:

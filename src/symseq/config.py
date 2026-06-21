@@ -139,6 +139,16 @@ def _build_generator(gen_cfg: dict, seed: int | None) -> Any:
             seed=seed if seed is not None else 42,
         )
 
+    # Special case: CFG preset constructor.
+    if type_name == "CFG" and "preset" in gen_cfg:
+        from symseq.generators.cfg import CFGGenerator
+
+        return CFGGenerator.from_preset(
+            preset_name=gen_cfg["preset"],
+            seed=seed,
+            **params,
+        )
+
     return build_generator(type_name, **params)
 
 

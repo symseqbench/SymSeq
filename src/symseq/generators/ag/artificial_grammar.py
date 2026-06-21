@@ -22,7 +22,8 @@ import pandas as pd
 # internal imports
 from symseq.core.sequencer import SymbolicSequencer
 from symseq.core.state import State
-from symseq.generators.ag import agl_dataset, presets, utils
+from symseq.generators.ag import agl_dataset, utils
+from symseq.generators.presets import ag as presets
 from symseq.generators.ag.generator import generate_random_grammar, grammar_with_complexity
 from symseq.generators.registry import register
 from symseq.trial import Target, Trial
