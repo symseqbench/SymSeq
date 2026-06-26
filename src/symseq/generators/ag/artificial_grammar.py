@@ -8,6 +8,8 @@ This module contains the ArtificialGrammar class that can be used to generate ar
 used in psycholinguistic experiments.
 """
 
+from __future__ import annotations
+
 import copy
 import logging
 import random
@@ -17,21 +19,30 @@ from multiprocessing import cpu_count
 
 import networkx as nx
 import numpy as np
-import pandas as pd
 
 # internal imports
 from symseq.core.sequencer import SymbolicSequencer
 from symseq.core.state import State
-from symseq.generators.ag import agl_dataset, utils
 from symseq.generators.presets import ag as presets
+from symseq.generators.ag import utils
 from symseq.generators.ag.generator import generate_random_grammar, grammar_with_complexity
 from symseq.generators.registry import register
 from symseq.trial import Target, Trial
 from symseq.utils.io import get_logger, save_pickle
 from symseq.utils.strtools import string_as_symbols
-from symseq.viz.ag_viz import plot_grammar
 
 logger = get_logger(__name__)
+
+
+def _require_pandas():
+    try:
+        import pandas as pd
+    except ImportError as exc:
+        raise ImportError(
+            "pandas is required for DataFrame display/analysis paths. "
+            "Install symseq with the analysis extra: pip install 'symseq[analysis]'."
+        ) from exc
+    return pd
 
 
 @register("ArtificialGrammar")
@@ -480,6 +491,7 @@ class ArtificialGrammar(SymbolicSequencer):
                 msg += " (EOS sink removed)"
 
             # select correct set of states and create the table DataFrame for display
+            pd = _require_pandas()
             df = pd.DataFrame(table, columns=list(states_as_str), index=list(states_as_str))
             print(df)
 
@@ -1076,6 +1088,8 @@ class ArtificialGrammar(SymbolicSequencer):
 
     def generate_balanced_agl(self, **kwargs):
         """Wrapper for agl_dataset.generate_balanced_agl"""
+        from symseq.generators.ag import agl_dataset
+
         return agl_dataset.generate_balanced_agl(self, **kwargs)
 
     def generate_feature_string_set(
@@ -1175,6 +1189,14 @@ class ArtificialGrammar(SymbolicSequencer):
         None
             The function does not return anything.
         """
+        try:
+            from symseq.viz.ag_viz import plot_grammar
+        except ImportError as exc:
+            raise ImportError(
+                "matplotlib is required for ArtificialGrammar.plot_grammar. "
+                "Install symseq with the viz extra: pip install 'symseq[viz]'."
+            ) from exc
+
         plot_grammar(self, save=save, **kwargs)
 
 

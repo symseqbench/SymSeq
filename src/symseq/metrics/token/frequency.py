@@ -65,4 +65,11 @@ def most_common_tokens(sequence: list[str], n: int = 10, as_freq: bool = True) -
 
 
 def legal_entry(train_string_set: list[list[str]], string: list[str]) -> bool:
-    raise NotImplementedError
+    """
+    Return whether a token sequence is absent from the training string set.
+
+    This is useful for leakage checks when building train/test splits: a string is
+    legal if the exact token sequence has not already appeared in the training set.
+    """
+    train_entries = {tuple(train_string) for train_string in train_string_set}
+    return tuple(string) not in train_entries

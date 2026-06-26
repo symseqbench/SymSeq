@@ -9,12 +9,12 @@ import textwrap
 
 import pytest
 
-from symseq.config import load_trial_set, _resolve_splits
+from symseq.config import _resolve_splits, load_trial_set
+from symseq.generators.ag import ArtificialGrammar
 from symseq.generators.nback import NBack
 from symseq.trial import Trial
 from symseq.trial_set import TrialSet
 from symseq.trial_source import TrialSource
-
 
 # --------------------- helpers ---------------------
 
@@ -123,9 +123,9 @@ class TestLoadFromDict:
         assert ts.splits == {}
         assert len(ts) == 10
 
-    def test_gen_params_forwarded(self):
+    def test_trial_params_forwarded(self):
         cfg = _nback_cfg()
-        cfg["symseq"]["trial_set"]["gen_params"] = {"seq_length": 25}
+        cfg["symseq"]["generator"]["trial_params"] = {"seq_length": 25}
         ts = load_trial_set(cfg)
         assert all(len(t.symbols) == 25 for t in ts.trials)
 
@@ -135,10 +135,13 @@ class TestLoadFromDictArtificialGrammarPreset:
         cfg = {
             "symseq": {
                 "seed": 42,
-                "generator": {"type": "ArtificialGrammar", "preset": "Elman"},
+                "generator": {
+                    "type": "ArtificialGrammar",
+                    "preset": "Elman",
+                    "trial_params": {"length_range": [3, 20]},
+                },
                 "trial_set": {
                     "n_trials": 5,
-                    "gen_params": {"length_range": [3, 20]},
                 },
             }
         }
@@ -148,6 +151,40 @@ class TestLoadFromDictArtificialGrammarPreset:
             assert t.symbols
             assert t.states is not None
             assert t.targets["grammaticality"].values is True
+
+
+class TestLoadFromDictArtificialGrammarRandom:
+    def test_random_mode_construction(self):
+        cfg = {
+            "symseq": {
+                "seed": 42,
+                "generator": {
+                    "type": "ArtificialGrammar",
+                    "mode": "random",
+                    "params": {
+                        "label": "Random AG test",
+                        "alphabet_size": 4,
+                        "ambiguities": 1,
+                        "ambiguity_depth": 2,
+                        "n_start_states": 1,
+                        "n_terminal_states": 1,
+                        "transition_density": 0.35,
+                        "assume_equiprobable": True,
+                        "min_string_length": 2,
+                        "verbose": False,
+                    },
+                },
+                "trial_constraints": {"length": {"min": 2, "max": 12}},
+                "trial_set": {
+                    "n_trials": 5,
+                },
+            }
+        }
+        ts = load_trial_set(cfg)
+        assert len(ts) == 5
+        assert isinstance(ts.meta["generator"], ArtificialGrammar)
+        assert all(t.symbols for t in ts.trials)
+        assert all(t.states is not None for t in ts.trials)
 
 
 # --------------------- load_trial_set from file ---------------------

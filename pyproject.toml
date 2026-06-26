@@ -31,29 +31,32 @@ license = {text = "MIT license"}
 requires-python = ">=3.10"
 dependencies = [
   "numpy",
-  "pandas",
-  "scikit-learn",
-  "matplotlib",
-  "more-itertools",
   "networkx",
   "nltk",
-  "scikit-learn",
+  "joblib",
   "scipy",
-  "seaborn",
   "tqdm",
+  "PyYAML",
   "typer",
-  "pytest>=8.3.5",
-  "ipython>=8.37.0",
-  "optuna>=4.3.0",
-  "optuna-dashboard>=0.18.0",
-  "plotly>=6.1.2",
-  "ipykernel>=6.29.5",
-  "toml>=0.10.2",
-  "antropy>=0.1.9",
-  "pandas-stubs==2.3.2.250926",
 ]
 
+[project.scripts]
+symseq = "symseq.cli:main"
+
 [project.optional-dependencies]
+analysis = [
+    "pandas",
+]
+fast-metrics = [
+    "antropy>=0.1.9",
+]
+notebooks = [
+    "ipython>=8.37.0",
+    "ipykernel>=6.29.5",
+]
+viz = [
+    "matplotlib",
+]
 dev = [
     "coverage",  # testing
     "mypy",  # linting
@@ -106,4 +109,3 @@ ignore = ["E501", "B008", "RUF001", "RUF002", "RUF003"]
 [tool.ruff.format]
 quote-style = "double"
 indent-style = "space"
-

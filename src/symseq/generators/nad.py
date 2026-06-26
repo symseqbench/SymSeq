@@ -8,7 +8,6 @@ Contains classes for various non-adjacent dependency (NAD) models.
 """
 
 import numpy as np
-from more_itertools import collapse
 
 # internal imports
 from symseq.core.sequencer import SymbolicSequencer
@@ -17,6 +16,16 @@ from symseq.trial import Target, Trial
 from symseq.utils.io import get_logger, save_pickle
 
 logger = get_logger(__name__)
+
+
+def _flatten_symbols(items):
+    flattened = []
+    for item in items:
+        if isinstance(item, (list, tuple)):
+            flattened.extend(_flatten_symbols(item))
+        else:
+            flattened.append(item)
+    return flattened
 
 
 @register("NonAdjacentDependencies")
@@ -111,7 +120,7 @@ class NonAdjacentDependencies(SymbolicSequencer):
         # TODO expected behavior for accepted patterns?
         # self.accepted_patterns = [f"A{i}B{i}" for i in range(vocabulary_size)]
 
-        all_symbols = list(collapse(self.dependency_pairs + self.fillers))  # flatten list
+        all_symbols = _flatten_symbols(self.dependency_pairs + self.fillers)
         unique_symbols = list(np.unique(all_symbols))  # alphabet
 
         super().__init__(
@@ -184,7 +193,7 @@ class NonAdjacentDependencies(SymbolicSequencer):
         if generator:
             raise NotImplementedError("Generator not implemented")
         else:
-            return list(collapse(string))
+            return _flatten_symbols(string)
 
     # ============================ Trial-based API ============================
 

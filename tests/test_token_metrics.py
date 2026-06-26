@@ -1,9 +1,13 @@
 """Tests for token-level metrics."""
 
-import numpy as np
 import pytest
 
-from symseq.metrics.token import most_common_tokens, token_duration_stats, token_frequency
+from symseq.metrics.token import (
+    legal_entry,
+    most_common_tokens,
+    token_duration_stats,
+    token_frequency,
+)
 
 
 class TestTokenFrequency:
@@ -49,6 +53,18 @@ class TestMostCommonTokens:
         seq = ['A', 'B']
         top = most_common_tokens(seq, n=10)
         assert len(top) == 2
+
+
+class TestLegalEntry:
+    """Tests for train/test leakage helper."""
+
+    def test_existing_string_is_not_legal(self):
+        train = [["A", "B"], ["B", "C"]]
+        assert legal_entry(train, ["A", "B"]) is False
+
+    def test_novel_string_is_legal(self):
+        train = [["A", "B"], ["B", "C"]]
+        assert legal_entry(train, ["A", "C"]) is True
 
 
 class TestTokenDurationStats:

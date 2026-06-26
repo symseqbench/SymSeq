@@ -1,0 +1,25 @@
+symseq:
+  seed: 42
+  storage:
+    path: data/SymSeq/random_ag
+  generator:
+    type: ArtificialGrammar
+    mode: random
+    params:
+      label: Random artificial grammar example
+      alphabet_size: 4
+      ambiguities: 1
+      ambiguity_depth: 2
+      n_start_states: 1
+      n_terminal_states: 1
+      transition_density: 0.35
+      assume_equiprobable: true
+      min_string_length: 2
+      verbose: false
+    trial_params:
+      length_range: [2, 12]
+  trial_set:
+    n_trials: 12
+    splits:
+      train: 8
+      test: 4

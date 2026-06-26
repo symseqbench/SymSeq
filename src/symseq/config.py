@@ -8,21 +8,21 @@ Replaces the SeqWrapper config-parsing role with a single free function:
 ``load_trial_set(source) -> TrialSet``. Schema is intentionally minimal and
 validated by hand (no pydantic dependency).
 
-Schema (YAML or TOML)::
+Schema (YAML)::
 
     symseq:
-      seed: 42                       # optional int; sets the generator's RNG
+      seed: 42                       # optional int; overrides run.seed
       generator:
         type: NBack                  # required; must be a registered generator
         params:                      # passed to the registered class __init__
           n: 2
           alphabet_size: 8
+        trial_params: {}             # optional kwargs forwarded to generate_trial
       trial_set:
         n_trials: 1200               # required, total trials to generate
         splits:                      # optional dict of name -> int (count) or float (fraction)
           train: 1000
           test: 200
-        gen_params: {}               # optional kwargs forwarded to each generate_trial call
 
 Convenience for ArtificialGrammar::
 
@@ -30,11 +30,15 @@ Convenience for ArtificialGrammar::
         type: ArtificialGrammar
         preset: Elman                # uses ArtificialGrammar.from_preset(...)
         seed: 42
+
+      generator:
+        type: ArtificialGrammar
+        mode: random                 # uses ArtificialGrammar.from_constraints(...)
+        params: {}
 """
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 from typing import Any
 
@@ -52,7 +56,7 @@ def load_trial_set(source: str | Path | dict) -> TrialSet:
     Parameters
     ----------
     source
-        Either a path to a YAML/TOML file, or an already-parsed config dict.
+        Either a path to a YAML file, or an already-parsed config dict.
 
     Returns
     -------
@@ -70,9 +74,9 @@ def load_trial_set(source: str | Path | dict) -> TrialSet:
 
     ts_cfg = cfg["trial_set"]
     n_trials = int(ts_cfg["n_trials"])
-    gen_params = ts_cfg.get("gen_params") or {}
+    trial_params = resolve_trial_params(cfg)
 
-    trials = generator.generate_trials(n=n_trials, **gen_params)
+    trials = generator.generate_trials(n=n_trials, **trial_params)
 
     splits = _resolve_splits(n_trials, ts_cfg.get("splits") or {})
 
@@ -100,16 +104,18 @@ def _load_config(source: str | Path | dict) -> dict:
             import yaml
             with open(path) as f:
                 cfg = yaml.safe_load(f)
-        elif suffix == ".toml":
-            import toml
-            with open(path) as f:
-                cfg = toml.load(f)
         else:
-            raise ValueError(f"unsupported config extension {suffix!r}; use .yaml/.yml/.toml")
+            raise ValueError(f"unsupported config extension {suffix!r}; use .yaml/.yml")
 
+    cfg = _migrate_config(cfg)
     if "symseq" not in cfg:
         raise ValueError("config missing top-level 'symseq' section")
-    return cfg["symseq"]
+    symseq_cfg = cfg["symseq"]
+    if symseq_cfg.get("seed") is None and cfg.get("run", {}).get("seed") is not None:
+        symseq_cfg["seed"] = cfg["run"]["seed"]
+    if "generator" in symseq_cfg:
+        _apply_symbol_space_defaults(symseq_cfg["generator"], cfg.get("symbol_space"))
+    return symseq_cfg
 
 
 def _validate(cfg: dict) -> None:
@@ -127,17 +133,18 @@ def _build_generator(gen_cfg: dict, seed: int | None) -> Any:
     type_name = gen_cfg["type"]
     params = dict(gen_cfg.get("params") or {})
 
-    # Inject seed -> rng for generators that accept either an rng or seed kwarg.
-    # We pass an rng to be consistent across all generators.
-    if seed is not None and "rng" not in params and "seed" not in params:
-        params["rng"] = np.random.default_rng(seed)
-
     # Special case: ArtificialGrammar preset constructor.
     if type_name == "ArtificialGrammar" and "preset" in gen_cfg:
         return ArtificialGrammar.from_preset(
             preset_name=gen_cfg["preset"],
             seed=seed if seed is not None else 42,
         )
+
+    # Special case: random ArtificialGrammar constructor.
+    if type_name == "ArtificialGrammar" and gen_cfg.get("mode") == "random":
+        if seed is not None and "rng" not in params and "seed" not in params:
+            params["seed"] = seed
+        return ArtificialGrammar.from_constraints(**params)
 
     # Special case: CFG preset constructor.
     if type_name == "CFG" and "preset" in gen_cfg:
@@ -149,7 +156,112 @@ def _build_generator(gen_cfg: dict, seed: int | None) -> Any:
             **params,
         )
 
+    # Inject seed -> rng for generators that accept either an rng or seed kwarg.
+    # We pass an rng to be consistent across all generators.
+    if seed is not None and "rng" not in params and "seed" not in params:
+        params["rng"] = np.random.default_rng(seed)
+
     return build_generator(type_name, **params)
+
+
+def _migrate_config(cfg: dict) -> dict:
+    cfg = _deep_copy_config(cfg)
+    if "dataset" in cfg:
+        dataset = cfg.pop("dataset")
+        cfg.setdefault("run", {})
+        cfg["run"].setdefault("seed", dataset.get("seed"))
+        alphabet = dict(dataset.get("alphabet") or {})
+        if alphabet:
+            eos = alphabet.pop("eos", "#")
+            cfg.setdefault("symbol_space", {})
+            cfg["symbol_space"].setdefault("alphabet", alphabet)
+            cfg["symbol_space"].setdefault("eos", eos)
+        if "trial_length" in dataset and cfg.get("symseq") is not None:
+            length = dict(dataset["trial_length"])
+            length.pop("distribution", None)
+            cfg["symseq"].setdefault("trial_constraints", {})
+            cfg["symseq"]["trial_constraints"].setdefault("length", length)
+
+    symseq_cfg = cfg.get("symseq")
+    if symseq_cfg is not None:
+        gen_cfg = symseq_cfg.get("generator")
+        ts_cfg = symseq_cfg.get("trial_set")
+        if gen_cfg is not None and ts_cfg and "gen_params" in ts_cfg:
+            gen_cfg.setdefault("trial_params", dict(ts_cfg.pop("gen_params") or {}))
+    return cfg
+
+
+def _deep_copy_config(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {k: _deep_copy_config(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_deep_copy_config(v) for v in value]
+    return value
+
+
+def _apply_symbol_space_defaults(gen_cfg: dict, symbol_space: dict | None) -> None:
+    if not symbol_space:
+        return
+    params = gen_cfg.setdefault("params", {})
+    alphabet = dict(symbol_space.get("alphabet") or {})
+    if not alphabet:
+        return
+    type_name = gen_cfg.get("type")
+    symbols = alphabet.get("symbols")
+    size = alphabet.get("size")
+    if type_name == "ArtificialGrammar" and gen_cfg.get("mode") == "random":
+        if size is not None:
+            params.setdefault("alphabet_size", size)
+        if symbol_space.get("eos") is not None:
+            params.setdefault("eos", symbol_space.get("eos"))
+    elif type_name == "NBack":
+        if symbols is not None:
+            params.setdefault("alphabet", symbols)
+        elif size is not None:
+            params.setdefault("alphabet_size", size)
+
+
+def resolve_trial_params(symseq_cfg: Any) -> dict[str, Any]:
+    """Return per-trial kwargs with safe inferred length constraints applied.
+
+    Explicit ``generator.trial_params`` always wins. Unsupported or ranged
+    generator-specific length policies are left to the generator/source.
+    Accepts either a plain dict or a typed config object with matching
+    attributes, so downstream packages can delegate SymSeq trial policy here.
+    """
+    gen_cfg = _cfg_get(symseq_cfg, "generator")
+    params = dict(_cfg_get(gen_cfg, "trial_params", {}) or {})
+    constraints = _cfg_get(symseq_cfg, "trial_constraints")
+    length = _cfg_get(constraints, "length") if constraints is not None else None
+    if not length:
+        return params
+
+    gen_type = _cfg_get(gen_cfg, "type")
+    min_len = int(_cfg_get(length, "min"))
+    max_len = int(_cfg_get(length, "max"))
+    if gen_type in {"ArtificialGrammar", "nAX"}:
+        if not any(k in params for k in ("length_range", "min_length", "max_length")):
+            params["length_range"] = [min_len, max_len]
+    elif gen_type == "NBack":
+        if "seq_length" not in params and min_len == max_len:
+            params["seq_length"] = max_len
+    elif gen_type == "NonAdjacentDependencies":
+        if "filler_len" not in params and min_len == max_len:
+            if max_len < 2:
+                raise ValueError(
+                    "NonAdjacentDependencies fixed trial length must be >= 2 "
+                    f"to infer filler_len, got {max_len}"
+                )
+            params["filler_len"] = max_len - 2
+    return params
+
+
+def _cfg_get(obj: Any, key: str, default: Any = None) -> Any:
+    if obj is None:
+        return default
+    if isinstance(obj, dict):
+        return obj.get(key, default)
+    return getattr(obj, key, default)
 
 
 def _resolve_splits(
@@ -165,7 +277,7 @@ def _resolve_splits(
     cursor = 0
     for name, value in splits_cfg.items():
         if isinstance(value, float) and 0.0 < value <= 1.0:
-            size = int(round(value * n_total))
+            size = round(value * n_total)
         elif isinstance(value, int) and value >= 0:
             size = value
         else:
