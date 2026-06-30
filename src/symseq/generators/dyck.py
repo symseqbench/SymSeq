@@ -612,7 +612,9 @@ class DyckGenerator(SymbolicSequencer):
 
         if strategy == "truncate":
             if len(t) > 1:
-                cut = int(self.rng.integers(1, len(t)))
+                invalid_cuts = [cut for cut in range(1, len(t)) if not self._is_valid_dyck(t[:cut])]
+                cuts = invalid_cuts or list(range(1, len(t)))
+                cut = int(self._choice(cuts))
                 t = t[:cut]
             return t
 
