@@ -77,6 +77,7 @@ class TrialSet:
     def alphabet(self) -> list[str]:
         return self.meta.get("alphabet", [])
 
+    # TODO add more sampling methods, not just deterministic cycling
     def draw_trial(self, **kwargs) -> Trial:
         """Return the next Trial in cursor order from the configured draw split.
 
