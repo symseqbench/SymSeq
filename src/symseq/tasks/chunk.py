@@ -30,11 +30,12 @@ class NGramChunk(Task):
         (each target is the singleton ``(symbols[i],)``).
     """
 
+    granularity = "per_token"
+
     def __init__(self, n: int):
         if not isinstance(n, int) or n < 1:
             raise ValueError(f"NGramChunk.n must be a positive int, got {n!r}")
         self.n = n
-        self.name = f"{n}_gram_chunk"
 
     def __call__(self, trial: Trial) -> Target:
         symbols = trial.symbols
@@ -42,8 +43,8 @@ class NGramChunk(Task):
         values: list = [None] * L
         mask: list[bool] = [False] * L
         if self.n > L:
-            return Target(values=values, mask=mask, kind="per_token")
+            return Target(values=values, mask=mask, granularity="per_token")
         for i in range(self.n - 1, L):
             values[i] = tuple(symbols[i - self.n + 1 : i + 1])
             mask[i] = True
-        return Target(values=values, mask=mask, kind="per_token")
+        return Target(values=values, mask=mask, granularity="per_token")

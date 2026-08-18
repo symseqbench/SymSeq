@@ -22,21 +22,21 @@ class TestTrialAPI:
         assert isinstance(trial, Trial)
         assert len(trial.symbols) == 4  # A_i + 2 fillers + B_i
         assert trial.states is None
-        assert isinstance(trial.targets["grammaticality"], Target)
-        assert isinstance(trial.targets["pair_index"], Target)
+        assert isinstance(trial.intrinsic_targets["grammaticality"], Target)
+        assert isinstance(trial.intrinsic_targets["pair_index"], Target)
 
     def test_grammaticality_always_true(self):
         gen = _nad()
         trial = gen.generate_trial(filler_len=2)
-        gt = trial.targets["grammaticality"]
-        assert gt.kind == "per_trial"
+        gt = trial.intrinsic_targets["grammaticality"]
+        assert gt.granularity == "per_trial"
         assert gt.values is True
         assert gt.mask is None
 
     def test_pair_index_recovery(self):
         gen = _nad()
         trial = gen.generate_trial(filler_len=2)
-        idx = trial.targets["pair_index"].values
+        idx = trial.intrinsic_targets["pair_index"].values
         # The dependency pair at that index should match the first/last tokens
         d1, d2 = gen.dependency_pairs[idx]
         assert trial.symbols[0] == d1
@@ -74,7 +74,7 @@ class TestTrialAPI:
         t1 = g1.generate_trial(filler_len=2)
         t2 = g2.generate_trial(filler_len=2)
         assert t1.symbols == t2.symbols
-        assert t1.targets["pair_index"].values == t2.targets["pair_index"].values
+        assert t1.intrinsic_targets["pair_index"].values == t2.intrinsic_targets["pair_index"].values
 
     def test_registry_builds_nad(self):
         from symseq.generators.registry import build, registered_names

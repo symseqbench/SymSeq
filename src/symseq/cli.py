@@ -77,6 +77,15 @@ def list_generators() -> None:
         typer.echo(name)
 
 
+@app.command("list-tasks")
+def list_tasks() -> None:
+    """List registered SymSeq task types."""
+    from symseq.tasks.registry import registered_types
+
+    for type_name in registered_types():
+        typer.echo(type_name)
+
+
 def _load_raw_config(path: Path) -> dict[str, Any]:
     try:
         with open(path) as f:
@@ -117,6 +126,7 @@ def _manifest(raw_config: dict[str, Any], trial_set: TrialSet) -> dict[str, Any]
             "preset": generator_cfg.get("preset"),
         },
         "seed": symseq_cfg.get("seed"),
+        "task_ids": list(trial_set.meta.get("task_ids", [])),
         "splits": {name: len(indexes) for name, indexes in trial_set.splits.items()},
         "n_trials": len(trial_set),
     }
@@ -138,7 +148,7 @@ def _trial_record(index: int, trial: Trial) -> dict[str, Any]:
             name: {
                 "values": _jsonable(target.values),
                 "mask": _jsonable(target.mask),
-                "kind": target.kind,
+                "granularity": target.granularity,
             }
             for name, target in trial.targets.items()
         },

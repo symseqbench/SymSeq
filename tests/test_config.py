@@ -12,6 +12,7 @@ import pytest
 from symseq.config import _resolve_splits, load_trial_set
 from symseq.generators.ag import ArtificialGrammar
 from symseq.generators.nback import NBack
+from symseq.tasks import ConfiguredTrialSource
 from symseq.trial import Trial
 from symseq.trial_set import TrialSet
 from symseq.trial_source import TrialSource
@@ -36,6 +37,20 @@ def _nback_cfg(**overrides) -> dict:
     for k, v in overrides.items():
         cfg["symseq"][k] = v
     return cfg
+
+
+def _ag_preset_cfg() -> dict:
+    return {
+        "symseq": {
+            "seed": 42,
+            "generator": {
+                "type": "ArtificialGrammar",
+                "preset": "Elman",
+                "trial_params": {"length_range": [3, 20]},
+            },
+            "trial_set": {"n_trials": 5},
+        }
+    }
 
 
 # --------------------- _resolve_splits ---------------------
@@ -89,7 +104,8 @@ class TestLoadFromDict:
     def test_meta_populated(self):
         ts = load_trial_set(_nback_cfg())
         assert ts.meta["seed"] == 42
-        assert isinstance(ts.meta["generator"], NBack)
+        assert isinstance(ts.meta["generator"], ConfiguredTrialSource)
+        assert isinstance(ts.meta["generator"].source, NBack)
         assert isinstance(ts.meta["alphabet"], list)
         assert "config" in ts.meta
 
@@ -97,8 +113,34 @@ class TestLoadFromDict:
         ts = load_trial_set(_nback_cfg())
         for trial in ts.trials:
             assert isinstance(trial, Trial)
-            assert "nback_match" in trial.targets
-            assert "nback_role" in trial.targets
+            assert trial.targets == {}
+            assert "nback_match" in trial.intrinsic_targets
+            assert "nback_role" in trial.intrinsic_targets
+
+    def test_configured_tasks_are_materialized_by_id(self):
+        cfg = _nback_cfg(
+            tasks=[
+                {"id": "match", "type": "NBackMatch"},
+                {"id": "next_token", "type": "NStepPrediction", "params": {"n": 1}},
+            ]
+        )
+        ts = load_trial_set(cfg)
+        assert ts.meta["task_ids"] == ["match", "next_token"]
+        assert all(set(trial.targets) == {"match", "next_token"} for trial in ts.trials)
+
+    def test_configured_tasks_replace_implicit_targets(self):
+        cfg = _nback_cfg(
+            tasks=[{"id": "next_token", "type": "NStepPrediction", "params": {"n": 1}}]
+        )
+        ts = load_trial_set(cfg)
+        assert all(set(trial.targets) == {"next_token"} for trial in ts.trials)
+
+    def test_meta_generator_materializes_tasks_on_fresh_draws(self):
+        cfg = _nback_cfg(tasks=[{"id": "match", "type": "NBackMatch"}])
+        ts = load_trial_set(cfg)
+        trial = ts.meta["generator"].draw_trial()
+        assert set(trial.targets) == {"match"}
+        assert trial.targets["match"].granularity == "per_token"
 
     def test_trial_set_satisfies_trial_source(self):
         ts = load_trial_set(_nback_cfg())
@@ -129,28 +171,52 @@ class TestLoadFromDict:
         ts = load_trial_set(cfg)
         assert all(len(t.symbols) == 25 for t in ts.trials)
 
+    def test_duplicate_task_ids_rejected(self):
+        cfg = _nback_cfg(
+            tasks=[
+                {"id": "task", "type": "NBackMatch"},
+                {"id": "task", "type": "NBackRole"},
+            ]
+        )
+        with pytest.raises(ValueError, match="must be unique"):
+            load_trial_set(cfg)
+
+    def test_task_entries_require_id(self):
+        cfg = _nback_cfg(tasks=[{"type": "NBackMatch"}])
+        with pytest.raises(ValueError, match=r"tasks\[0\]\.id"):
+            load_trial_set(cfg)
+
+    def test_intrinsic_task_mismatch_fails_before_trial_generation(self, monkeypatch):
+        cfg = _nback_cfg(tasks=[{"id": "valid", "type": "Grammaticality"}])
+
+        def fail_if_called(*args, **kwargs):
+            pytest.fail("trial generation must not run for an incompatible task")
+
+        monkeypatch.setattr(NBack, "generate_trials", fail_if_called)
+        with pytest.raises(ValueError, match=r"requires intrinsic target.*grammaticality"):
+            load_trial_set(cfg)
+
 
 class TestLoadFromDictArtificialGrammarPreset:
     def test_preset_construction(self):
-        cfg = {
-            "symseq": {
-                "seed": 42,
-                "generator": {
-                    "type": "ArtificialGrammar",
-                    "preset": "Elman",
-                    "trial_params": {"length_range": [3, 20]},
-                },
-                "trial_set": {
-                    "n_trials": 5,
-                },
-            }
-        }
-        ts = load_trial_set(cfg)
+        ts = load_trial_set(_ag_preset_cfg())
         assert len(ts) == 5
         for t in ts.trials:
             assert t.symbols
             assert t.states is not None
-            assert t.targets["grammaticality"].values is True
+            assert t.targets == {}
+            assert t.intrinsic_targets["grammaticality"].values is True
+
+    def test_only_configured_ag_targets_are_published(self):
+        cfg = _ag_preset_cfg()
+        cfg["symseq"]["tasks"] = [
+            {"id": "next_token", "type": "NStepPrediction", "params": {"n": 1}}
+        ]
+        ts = load_trial_set(cfg)
+
+        for trial in ts.trials:
+            assert set(trial.targets) == {"next_token"}
+            assert "grammaticality" in trial.intrinsic_targets
 
 
 class TestLoadFromDictArtificialGrammarRandom:
@@ -182,7 +248,8 @@ class TestLoadFromDictArtificialGrammarRandom:
         }
         ts = load_trial_set(cfg)
         assert len(ts) == 5
-        assert isinstance(ts.meta["generator"], ArtificialGrammar)
+        assert isinstance(ts.meta["generator"], ConfiguredTrialSource)
+        assert isinstance(ts.meta["generator"].source, ArtificialGrammar)
         assert all(t.symbols for t in ts.trials)
         assert all(t.states is not None for t in ts.trials)
 

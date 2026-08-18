@@ -99,8 +99,8 @@ def test_generate_trial_grammatical():
     gen = CFGGenerator(ANBN, seed=0)
     trial = gen.generate_trial(grammatical=True)
     print(trial)
-    assert trial.targets["grammaticality"].values is True
-    assert trial.targets["grammaticality"].kind == "per_trial"
+    assert trial.intrinsic_targets["grammaticality"].values is True
+    assert trial.intrinsic_targets["grammaticality"].granularity == "per_trial"
     assert trial.meta["paradigm"] == "CFG"
     assert trial.meta["length"] == len(trial.symbols)
     assert gen.is_grammatical(trial.symbols)
@@ -109,7 +109,7 @@ def test_generate_trial_grammatical():
 def test_generate_trial_nongrammatical():
     gen = CFGGenerator(ANBN, seed=0)
     trial = gen.generate_trial(grammatical=False)
-    assert trial.targets["grammaticality"].values is False
+    assert trial.intrinsic_targets["grammaticality"].values is False
     assert not gen.is_grammatical(trial.symbols)
 
 

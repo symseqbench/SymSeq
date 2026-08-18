@@ -7,7 +7,7 @@ Models n-AX (conditional one-back) as a regular grammar.
 
 from __future__ import annotations
 
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import ClassVar, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
@@ -65,6 +65,12 @@ class nAX(ArtificialGrammar):
       The distinction is in labeling (i.e., j==i is target).
     - The grammar keeps filler states context-specific to retain context memory until the probe.
     """
+
+    intrinsic_target_granularities: ClassVar[dict[str, str]] = {
+        **ArtificialGrammar.intrinsic_target_granularities,
+        "nax_label": "per_trial",
+        "nax_is_target": "per_trial",
+    }
 
     def __init__(
         self,
@@ -390,12 +396,16 @@ class nAX(ArtificialGrammar):
         Augments the parent ArtificialGrammar Trial with nAX-specific intrinsic
         per-trial targets:
         - ``nax_label``: trial-type label like 'C1->T' (target) or 'C1->L(2)' (lure)
-        - ``is_target``: True if probe matches the context's expected probe
+        - ``nax_is_target``: True if probe matches the context's expected probe
         """
         trial = super().generate_trial(*args, **kwargs)
         label, is_target = self.label_trial(trial.symbols)
-        trial.targets["nax_label"] = Target(values=label, mask=None, kind="per_trial")
-        trial.targets["is_target"] = Target(values=is_target, mask=None, kind="per_trial")
+        trial.intrinsic_targets["nax_label"] = Target(
+            values=label, mask=None, granularity="per_trial"
+        )
+        trial.intrinsic_targets["nax_is_target"] = Target(
+            values=is_target, mask=None, granularity="per_trial"
+        )
         trial.meta["paradigm"] = "nAX"
         trial.meta["n_contexts"] = len(self.contexts)
         return trial

@@ -660,20 +660,20 @@ class TestTrialAPI:
         assert isinstance(trial, Trial)
         assert len(trial.symbols) > 0
         assert gen._is_valid_dyck(trial.symbols)
-        assert isinstance(trial.targets["grammaticality"], Target)
+        assert isinstance(trial.intrinsic_targets["grammaticality"], Target)
 
     def test_grammaticality_target_true_by_default(self):
         gen = DyckGenerator(k=2, mode="stack", rng=np.random.default_rng(42))
         trial = gen.generate_trial()
-        gt = trial.targets["grammaticality"]
-        assert gt.kind == "per_trial"
+        gt = trial.intrinsic_targets["grammaticality"]
+        assert gt.granularity == "per_trial"
         assert gt.values is True
         assert gt.mask is None
 
     def test_grammaticality_target_false_for_nongrammatical(self):
         gen = DyckGenerator(k=2, mode="stack", rng=np.random.default_rng(42))
         trial = gen.generate_trial(grammatical=False)
-        assert trial.targets["grammaticality"].values is False
+        assert trial.intrinsic_targets["grammaticality"].values is False
         assert not gen._is_valid_dyck(trial.symbols)
 
     def test_states_is_none_for_dyck(self):

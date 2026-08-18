@@ -425,34 +425,34 @@ class TestTrialAPI:
         assert len(trial.symbols) == 20
         assert all(s in gen.alphabet for s in trial.symbols)
         assert trial.states is None
-        assert isinstance(trial.targets["nback_match"], Target)
-        assert isinstance(trial.targets["nback_role"], Target)
+        assert isinstance(trial.intrinsic_targets["nback_match"], Target)
+        assert isinstance(trial.intrinsic_targets["nback_role"], Target)
 
     def test_intrinsic_targets_present(self):
         gen = NBack(n=2, seq_length=20, alphabet_size=6, seed=42)
         trial = gen.generate_trial()
-        assert set(trial.targets) == {"nback_match", "nback_role"}
-        for tgt in trial.targets.values():
-            assert tgt.kind == "per_token"
+        assert set(trial.intrinsic_targets) == {"nback_match", "nback_role"}
+        for tgt in trial.intrinsic_targets.values():
+            assert tgt.granularity == "per_token"
             assert len(tgt.values) == len(trial.symbols)
             assert len(tgt.mask) == len(trial.symbols)
 
     def test_burn_in_positions_masked(self):
         gen = NBack(n=3, seq_length=20, alphabet_size=6, seed=42)
         trial = gen.generate_trial()
-        mask = trial.targets["nback_match"].mask
+        mask = trial.intrinsic_targets["nback_match"].mask
         # positions 0..n-1 are burn-in; mask is False there
         assert mask[:3] == [False, False, False]
         # positions n.. are valid
         assert all(mask[3:])
         # burn-in values are None
-        assert trial.targets["nback_match"].values[:3] == [None, None, None]
+        assert trial.intrinsic_targets["nback_match"].values[:3] == [None, None, None]
 
     def test_nback_match_target_consistency_with_label_sequence(self):
         gen = NBack(n=2, seq_length=20, alphabet_size=6, seed=42)
         trial = gen.generate_trial()
         legacy = gen.label_sequence(trial.symbols)
-        for i, v in enumerate(trial.targets["nback_match"].values):
+        for i, v in enumerate(trial.intrinsic_targets["nback_match"].values):
             if v is None:
                 assert legacy[i] == -1
             else:
@@ -470,7 +470,7 @@ class TestTrialAPI:
         gen = NBack(n=2, seq_length=20, alphabet_size=8, seed=42)
         trial = gen.generate_trial(seq_length=50)
         assert len(trial.symbols) == 50
-        assert len(trial.targets["nback_match"].values) == 50
+        assert len(trial.intrinsic_targets["nback_match"].values) == 50
 
     def test_generate_trials_batch(self):
         from symseq.trial import Trial
@@ -504,7 +504,7 @@ class TestTrialAPI:
         t1 = gen1.generate_trial()
         t2 = gen2.generate_trial()
         assert t1.symbols == t2.symbols
-        assert t1.targets["nback_match"].values == t2.targets["nback_match"].values
+        assert t1.intrinsic_targets["nback_match"].values == t2.intrinsic_targets["nback_match"].values
 
     def test_registry_builds_nback(self):
         from symseq.generators.registry import build, registered_names

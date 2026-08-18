@@ -8,13 +8,14 @@ Implements abstract/base class used to generate symbolic sequences.
 
 # standard imports
 from abc import ABC
-from typing import Iterator
+from collections.abc import Iterator, Mapping
+from typing import ClassVar
 
 import numpy as np
 
 # local imports
-from ..utils.io import get_logger, save_pickle
 from ..trial import Trial
+from ..utils.io import get_logger, save_pickle
 
 logger = get_logger(__name__)
 
@@ -24,7 +25,12 @@ class SymbolicSequencer(ABC):
     """
     Build patterned symbolic sequences.
     Contains the generic constructors to implement structured symbolic sequences
+
+    Subclasses declare guaranteed intrinsic target IDs and granularities through
+    ``intrinsic_target_granularities``.
     """
+
+    intrinsic_target_granularities: ClassVar[Mapping[str, str]] = {}
 
     def __init__(
         self,
@@ -123,9 +129,9 @@ class SymbolicSequencer(ABC):
         return random_sequence
 
     # ============================= Trial-based API =============================
-    # Native generation: subclasses override generate_trial to emit a Trial
-    # populated with intrinsic targets. The Protocol methods (draw_trial,
-    # draw_batch) wrap this so callers can be source-agnostic.
+    # Native generation: subclasses override generate_trial to emit a Trial.
+    # Generator-derived target candidates live in Trial.intrinsic_targets;
+    # configured task materialization decides which become public targets.
 
     def generate_trial(self, **params) -> Trial:
         """Generate one Trial. Subclasses must override."""

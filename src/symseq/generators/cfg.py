@@ -23,7 +23,7 @@ left-hand side are assigned uniform probabilities.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Sequence
+from typing import ClassVar, Sequence
 
 import numpy as np
 
@@ -91,6 +91,10 @@ class CFGGenerator(SymbolicSequencer):
     >>> gen.is_grammatical(['a', 'b', 'b'])
     False
     """
+
+    intrinsic_target_granularities: ClassVar[dict[str, str]] = {
+        "grammaticality": "per_trial"
+    }
 
     def __init__(
         self,
@@ -431,9 +435,9 @@ class CFGGenerator(SymbolicSequencer):
         """
         Generate one Trial.
 
-        ``Trial.targets["grammaticality"]`` is a per-trial bool — ``True`` for a
-        string sampled from the grammar, ``False`` for one produced by the
-        corruption procedure.
+        ``Trial.intrinsic_targets["grammaticality"]`` is a per-trial bool —
+        ``True`` for a string sampled from the grammar, ``False`` for one
+        produced by the corruption procedure.
         """
         if grammatical:
             symbols = self.generate_string(max_attempts=max_attempts)
@@ -447,15 +451,17 @@ class CFGGenerator(SymbolicSequencer):
             )[0]
             is_gram = False
 
-        targets = {
-            "grammaticality": Target(values=is_gram, mask=None, kind="per_trial"),
+        intrinsic_targets = {
+            "grammaticality": Target(
+                values=is_gram, mask=None, granularity="per_trial"
+            ),
         }
         meta = {
             "paradigm": "CFG",
             "grammar": self.label,
             "length": len(symbols),
         }
-        return Trial(symbols=symbols, states=None, targets=targets, meta=meta)
+        return Trial(symbols=symbols, meta=meta, intrinsic_targets=intrinsic_targets)
 
     # ================================= Utilities ==================================
 

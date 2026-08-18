@@ -7,11 +7,37 @@ tasks so :func:`symseq.tasks.registry.build` works without per-class imports.
 
 from symseq.tasks.base import Task
 from symseq.tasks.chunk import NGramChunk
+from symseq.tasks.intrinsic import (
+    Grammaticality,
+    NAXIsTarget,
+    NAXLabel,
+    NBackMatch,
+    NBackRole,
+    PairIndex,
+)
+from symseq.tasks.materialize import (
+    ConfiguredTrialSource,
+    build_tasks,
+    coerce_task_entries,
+    materialize_targets,
+    validate_task_compatibility,
+)
 from symseq.tasks.shift import NStepMemory, NStepPrediction
 
 __all__ = [
-    "Task",
+    "ConfiguredTrialSource",
+    "Grammaticality",
+    "NAXIsTarget",
+    "NAXLabel",
+    "NBackMatch",
+    "NBackRole",
+    "NGramChunk",
     "NStepMemory",
     "NStepPrediction",
-    "NGramChunk",
+    "PairIndex",
+    "Task",
+    "build_tasks",
+    "coerce_task_entries",
+    "materialize_targets",
+    "validate_task_compatibility",
 ]

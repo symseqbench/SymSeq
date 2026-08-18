@@ -18,6 +18,11 @@ Schema (YAML)::
           n: 2
           alphabet_size: 8
         trial_params: {}             # optional kwargs forwarded to generate_trial
+      tasks:                          # optional configured target materializers
+        - id: next_token             # unique public target key
+          type: NStepPrediction      # registered task implementation
+          params:                    # optional constructor arguments
+            n: 1
       trial_set:
         n_trials: 1200               # required, total trials to generate
         splits:                      # optional dict of name -> int (count) or float (fraction)
@@ -47,6 +52,11 @@ import numpy as np
 import symseq.generators  # noqa: F401 — eagerly register built-in generators
 from symseq.generators.ag import ArtificialGrammar
 from symseq.generators.registry import build as build_generator
+from symseq.tasks.materialize import (
+    ConfiguredTrialSource,
+    build_tasks,
+    materialize_targets,
+)
 from symseq.trial_set import TrialSet
 
 
@@ -67,16 +77,20 @@ def load_trial_set(source: str | Path | dict) -> TrialSet:
     """
     cfg = _load_config(source)
     _validate(cfg)
+    tasks = build_tasks(cfg.get("tasks"), where="config.symseq.tasks")
 
     seed = cfg.get("seed")
     gen_cfg = cfg["generator"]
     generator = _build_generator(gen_cfg, seed=seed)
+    live_generator = ConfiguredTrialSource(generator, tasks)
 
     ts_cfg = cfg["trial_set"]
     n_trials = int(ts_cfg["n_trials"])
     trial_params = resolve_trial_params(cfg)
 
     trials = generator.generate_trials(n=n_trials, **trial_params)
+    for trial in trials:
+        materialize_targets(trial, tasks)
 
     splits = _resolve_splits(n_trials, ts_cfg.get("splits") or {})
 
@@ -84,7 +98,8 @@ def load_trial_set(source: str | Path | dict) -> TrialSet:
         "config": cfg,
         "seed": seed,
         "alphabet": list(generator.alphabet),
-        "generator": generator,
+        "generator": live_generator,
+        "task_ids": list(tasks),
     }
     return TrialSet(trials=trials, splits=splits, meta=meta)
 

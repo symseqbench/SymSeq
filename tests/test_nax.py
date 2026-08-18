@@ -707,23 +707,23 @@ class TestTrialAPI:
         assert len(trial.symbols) >= 3
         assert len(trial.states) == len(trial.symbols)
         # AG-level + nAX-level intrinsic targets
-        assert isinstance(trial.targets["grammaticality"], Target)
-        assert isinstance(trial.targets["nax_label"], Target)
-        assert isinstance(trial.targets["is_target"], Target)
+        assert isinstance(trial.intrinsic_targets["grammaticality"], Target)
+        assert isinstance(trial.intrinsic_targets["nax_label"], Target)
+        assert isinstance(trial.intrinsic_targets["nax_is_target"], Target)
 
     def test_nax_label_matches_label_trial(self):
         gen = nAX(seed=42)
         trial = gen.generate_trial()
         label_legacy, is_target_legacy = gen.label_trial(trial.symbols)
-        assert trial.targets["nax_label"].values == label_legacy
-        assert trial.targets["is_target"].values == is_target_legacy
+        assert trial.intrinsic_targets["nax_label"].values == label_legacy
+        assert trial.intrinsic_targets["nax_is_target"].values == is_target_legacy
 
-    def test_nax_targets_kind_per_trial(self):
+    def test_nax_targets_granularity_per_trial(self):
         gen = nAX(seed=42)
         trial = gen.generate_trial()
-        for key in ("grammaticality", "nax_label", "is_target"):
-            assert trial.targets[key].kind == "per_trial"
-            assert trial.targets[key].mask is None
+        for key in ("grammaticality", "nax_label", "nax_is_target"):
+            assert trial.intrinsic_targets[key].granularity == "per_trial"
+            assert trial.intrinsic_targets[key].mask is None
 
     def test_meta_paradigm_is_nax_not_ag(self):
         gen = nAX(seed=42)
@@ -754,7 +754,7 @@ class TestTrialAPI:
         t1 = g1.generate_trial()
         t2 = g2.generate_trial()
         assert t1.symbols == t2.symbols
-        assert t1.targets["nax_label"].values == t2.targets["nax_label"].values
+        assert t1.intrinsic_targets["nax_label"].values == t2.intrinsic_targets["nax_label"].values
 
     def test_registry_builds_nax(self):
         from symseq.generators.registry import build, registered_names

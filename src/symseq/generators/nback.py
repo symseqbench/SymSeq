@@ -27,6 +27,8 @@ for Sternberg-style controls.
 
 from __future__ import annotations
 
+from typing import ClassVar
+
 import numpy as np
 
 from symseq.core.sequencer import SymbolicSequencer
@@ -95,6 +97,11 @@ class NBack(SymbolicSequencer):
     verbose : bool
         Verbose initialization logging. Default False.
     """
+
+    intrinsic_target_granularities: ClassVar[dict[str, str]] = {
+        "nback_match": "per_token",
+        "nback_role": "per_token",
+    }
 
     def __init__(
         self,
@@ -473,9 +480,9 @@ class NBack(SymbolicSequencer):
     # ============================ Trial-based API ============================
 
     def generate_trial(self, seq_length: int | None = None, **kwargs) -> Trial:
-        """Generate one Trial with the n-back sequence and intrinsic targets.
+        """Generate one Trial with the n-back sequence and intrinsic target candidates.
 
-        The Trial carries two intrinsic per-token targets:
+        The Trial carries two intrinsic per-token target candidates:
         - ``nback_match``: binary (1 = true n-back match, 0 = no match).
         - ``nback_role``: multiclass role per the multiclass labeling scheme
           (0 = no match, 1 = true match, 2.. = lure of offset ``lure_offsets[code-2]``).
@@ -491,9 +498,13 @@ class NBack(SymbolicSequencer):
         match_values = [int(v) if v != -1 else None for v in binary_labels.tolist()]
         role_values = [int(v) if v != -1 else None for v in role_labels.tolist()]
 
-        targets = {
-            "nback_match": Target(values=match_values, mask=valid_mask, kind="per_token"),
-            "nback_role": Target(values=role_values, mask=valid_mask, kind="per_token"),
+        intrinsic_targets = {
+            "nback_match": Target(
+                values=match_values, mask=valid_mask, granularity="per_token"
+            ),
+            "nback_role": Target(
+                values=role_values, mask=valid_mask, granularity="per_token"
+            ),
         }
 
         meta = {
@@ -503,7 +514,7 @@ class NBack(SymbolicSequencer):
             "lure_offsets": tuple(self.lure_offsets),
         }
 
-        return Trial(symbols=symbols, states=None, targets=targets, meta=meta)
+        return Trial(symbols=symbols, meta=meta, intrinsic_targets=intrinsic_targets)
 
     # ============================== Labeling ================================
 

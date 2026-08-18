@@ -27,21 +27,22 @@ class NStepMemory(Task):
     Positions ``[0..n-1]`` are masked (no valid target exists).
     """
 
+    granularity = "per_token"
+
     def __init__(self, n: int):
         if not isinstance(n, int) or n < 1:
             raise ValueError(f"NStepMemory.n must be a positive int, got {n!r}")
         self.n = n
-        self.name = f"{n}_step_memory"
 
     def __call__(self, trial: Trial) -> Target:
         symbols = trial.symbols
         L = len(symbols)
         if self.n >= L:
             # No valid positions; everything masked.
-            return Target(values=[None] * L, mask=[False] * L, kind="per_token")
+            return Target(values=[None] * L, mask=[False] * L, granularity="per_token")
         values = [None] * self.n + list(symbols[: L - self.n])
         mask = [False] * self.n + [True] * (L - self.n)
-        return Target(values=values, mask=mask, kind="per_token")
+        return Target(values=values, mask=mask, granularity="per_token")
 
 
 @register("NStepPrediction")
@@ -51,17 +52,18 @@ class NStepPrediction(Task):
     Last ``n`` positions are masked.
     """
 
+    granularity = "per_token"
+
     def __init__(self, n: int):
         if not isinstance(n, int) or n < 1:
             raise ValueError(f"NStepPrediction.n must be a positive int, got {n!r}")
         self.n = n
-        self.name = f"{n}_step_prediction"
 
     def __call__(self, trial: Trial) -> Target:
         symbols = trial.symbols
         L = len(symbols)
         if self.n >= L:
-            return Target(values=[None] * L, mask=[False] * L, kind="per_token")
+            return Target(values=[None] * L, mask=[False] * L, granularity="per_token")
         values = list(symbols[self.n:]) + [None] * self.n
         mask = [True] * (L - self.n) + [False] * self.n
-        return Target(values=values, mask=mask, kind="per_token")
+        return Target(values=values, mask=mask, granularity="per_token")

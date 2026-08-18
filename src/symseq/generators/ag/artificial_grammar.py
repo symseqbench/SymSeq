@@ -16,6 +16,7 @@ import random
 import warnings
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from multiprocessing import cpu_count
+from typing import ClassVar
 
 import networkx as nx
 import numpy as np
@@ -62,6 +63,10 @@ class ArtificialGrammar(SymbolicSequencer):
     [4] - Pothos, E. M. (2007). Theories of artificial grammar learning. Psychological Bulletin, 133(2),
     227–244.
     """
+
+    intrinsic_target_granularities: ClassVar[dict[str, str]] = {
+        "grammaticality": "per_trial"
+    }
 
     def __init__(
         self,
@@ -898,8 +903,8 @@ class ArtificialGrammar(SymbolicSequencer):
 
         - ``Trial.symbols``: bare alphabet sequence (e.g. ['A', 'B', 'A']).
         - ``Trial.states``: state-indexed view (e.g. ['A0', 'B1', 'A2']).
-        - ``Trial.targets["grammaticality"]``: per-trial bool — True for samples
-          drawn from the grammar, False for samples corrupted via ``add_deviant``.
+        - ``Trial.intrinsic_targets["grammaticality"]``: per-trial bool — True
+          for samples drawn from the grammar, False for corrupted samples.
         """
         if grammatical:
             states = self.generate_string(
@@ -925,8 +930,10 @@ class ArtificialGrammar(SymbolicSequencer):
 
         symbols = string_as_symbols(states)
 
-        targets = {
-            "grammaticality": Target(values=is_gram, mask=None, kind="per_trial"),
+        intrinsic_targets = {
+            "grammaticality": Target(
+                values=is_gram, mask=None, granularity="per_trial"
+            ),
         }
         meta = {
             "paradigm": "ArtificialGrammar",
@@ -934,7 +941,12 @@ class ArtificialGrammar(SymbolicSequencer):
             "n_states": len(self.states),
             "length": len(symbols),
         }
-        return Trial(symbols=symbols, states=states, targets=targets, meta=meta)
+        return Trial(
+            symbols=symbols,
+            states=states,
+            meta=meta,
+            intrinsic_targets=intrinsic_targets,
+        )
 
     def generate_string_set(
         self,

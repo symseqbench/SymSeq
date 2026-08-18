@@ -7,6 +7,8 @@ nad.py
 Contains classes for various non-adjacent dependency (NAD) models.
 """
 
+from typing import ClassVar
+
 import numpy as np
 
 # internal imports
@@ -45,6 +47,11 @@ class NonAdjacentDependencies(SymbolicSequencer):
         in Computational Neuroscience, 3(October), 23.
     [3] Onnis, ...
     """
+
+    intrinsic_target_granularities: ClassVar[dict[str, str]] = {
+        "grammaticality": "per_trial",
+        "pair_index": "per_trial",
+    }
 
     def __init__(
         self,
@@ -218,9 +225,9 @@ class NonAdjacentDependencies(SymbolicSequencer):
         except ValueError:
             pair_index = None  # defensive — should not happen for grammatical strings
 
-        targets = {
-            "grammaticality": Target(values=True, mask=None, kind="per_trial"),
-            "pair_index": Target(values=pair_index, mask=None, kind="per_trial"),
+        intrinsic_targets = {
+            "grammaticality": Target(values=True, mask=None, granularity="per_trial"),
+            "pair_index": Target(values=pair_index, mask=None, granularity="per_trial"),
         }
         meta = {
             "paradigm": "NonAdjacentDependencies",
@@ -229,7 +236,7 @@ class NonAdjacentDependencies(SymbolicSequencer):
             "n_deps": self.n_deps,
             "length": len(symbols),
         }
-        return Trial(symbols=symbols, states=None, targets=targets, meta=meta)
+        return Trial(symbols=symbols, meta=meta, intrinsic_targets=intrinsic_targets)
 
     # TODO rename function
     def generate_vocabulary(self, filler_len: int | None = None, generator: bool = False, verbose: bool = True):

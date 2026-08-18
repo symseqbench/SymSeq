@@ -10,7 +10,7 @@ This module contains the DyckGenerator class for creating k-Dyck languages.
 from __future__ import annotations
 
 import string
-from typing import Dict, List, Literal, Optional, Sequence
+from typing import ClassVar, Dict, List, Literal, Optional, Sequence
 
 import numpy as np
 
@@ -102,6 +102,10 @@ class DyckGenerator(SymbolicSequencer):
     >>> gen.generate_string()
     ['(', '[', ']', ')']
     """
+
+    intrinsic_target_granularities: ClassVar[dict[str, str]] = {
+        "grammaticality": "per_trial"
+    }
 
     def __init__(
         self,
@@ -412,9 +416,9 @@ class DyckGenerator(SymbolicSequencer):
     ) -> Trial:
         """Generate one Trial.
 
-        Trial.targets["grammaticality"] is a per-trial bool — True for a valid
-        k-Dyck string, False if produced by the non-grammatical corruption
-        procedure.
+        Trial.intrinsic_targets["grammaticality"] is a per-trial bool — True
+        for a valid k-Dyck string, False if produced by the non-grammatical
+        corruption procedure.
         """
         if grammatical:
             symbols = self.generate_string(
@@ -433,8 +437,10 @@ class DyckGenerator(SymbolicSequencer):
             )[0]
             is_gram = False
 
-        targets = {
-            "grammaticality": Target(values=is_gram, mask=None, kind="per_trial"),
+        intrinsic_targets = {
+            "grammaticality": Target(
+                values=is_gram, mask=None, granularity="per_trial"
+            ),
         }
         meta = {
             "paradigm": "Dyck",
@@ -442,7 +448,7 @@ class DyckGenerator(SymbolicSequencer):
             "mode": self.mode,
             "length": len(symbols),
         }
-        return Trial(symbols=symbols, states=None, targets=targets, meta=meta)
+        return Trial(symbols=symbols, meta=meta, intrinsic_targets=intrinsic_targets)
 
     def generate_nongrammatical_strings(
         self,

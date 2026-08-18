@@ -24,7 +24,7 @@ class TestTrialAPI:
         assert isinstance(trial, Trial)
         assert len(trial.symbols) > 0
         assert len(trial.states) == len(trial.symbols)
-        assert isinstance(trial.targets["grammaticality"], Target)
+        assert isinstance(trial.intrinsic_targets["grammaticality"], Target)
 
     def test_symbols_and_states_are_consistent(self):
         from symseq.utils.strtools import string_as_symbols
@@ -38,15 +38,15 @@ class TestTrialAPI:
     def test_grammaticality_target_true_by_default(self):
         gen = _ag()
         trial = gen.generate_trial(length_range=(3, 30))
-        gt = trial.targets["grammaticality"]
-        assert gt.kind == "per_trial"
+        gt = trial.intrinsic_targets["grammaticality"]
+        assert gt.granularity == "per_trial"
         assert gt.values is True
         assert gt.mask is None
 
     def test_grammaticality_target_false_for_nongrammatical(self):
         gen = _ag()
         trial = gen.generate_trial(length_range=(3, 30), grammatical=False, n_deviants=1)
-        assert trial.targets["grammaticality"].values is False
+        assert trial.intrinsic_targets["grammaticality"].values is False
 
     def test_meta_carries_paradigm_info(self):
         gen = _ag()

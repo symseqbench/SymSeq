@@ -23,3 +23,6 @@ symseq:
     splits:
       train: 8
       test: 4
+  tasks:
+    - id: grammaticality
+      type: Grammaticality
