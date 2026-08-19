@@ -1,791 +1,793 @@
 # SPDX-License-Identifier: MIT
 # Copyright (c) 2025-present, symseq Contributors
 
-"""
-nad.py
+"""Generators for simple, crossed, and nested non-adjacent dependencies."""
 
-Contains classes for various non-adjacent dependency (NAD) models.
-"""
+from __future__ import annotations
 
+from abc import ABC, abstractmethod
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass
+from math import factorial
 from typing import ClassVar
 
 import numpy as np
 
-# internal imports
 from symseq.core.sequencer import SymbolicSequencer
 from symseq.generators.registry import register
 from symseq.trial import Target, Trial
-from symseq.utils.io import get_logger, save_pickle
+from symseq.utils.io import get_logger
 
 logger = get_logger(__name__)
 
 
-def _flatten_symbols(items):
-    flattened = []
-    for item in items:
-        if isinstance(item, (list, tuple)):
-            flattened.extend(_flatten_symbols(item))
+@dataclass(slots=True)
+class _Frame:
+    """Internal representation of one generated dependency frame."""
+
+    symbols: list[str]
+    pair_index: int | None = None
+    dependency_order: tuple[int, ...] | None = None
+    dependency_length: int | None = None
+
+
+def _nonnegative_int(value: object, name: str) -> int:
+    """Validate and return a non-negative integer."""
+    if isinstance(value, (bool, np.bool_)) or not isinstance(value, (int, np.integer)):
+        raise TypeError(f"{name} must be a non-negative integer.")
+    parsed = int(value)
+    if parsed < 0:
+        raise ValueError(f"{name} must be a non-negative integer.")
+    return parsed
+
+
+def _positive_int(value: object, name: str) -> int:
+    """Validate and return a positive integer."""
+    parsed = _nonnegative_int(value, name)
+    if parsed == 0:
+        raise ValueError(f"{name} must be a positive integer.")
+    return parsed
+
+
+def _fraction(value: object, name: str) -> float:
+    """Validate and return a finite fraction in the closed unit interval."""
+    if isinstance(value, (bool, np.bool_)) or not isinstance(value, (int, float, np.integer, np.floating)):
+        raise TypeError(f"{name} must be a finite number in [0, 1].")
+    parsed = float(value)
+    if not np.isfinite(parsed) or not 0.0 <= parsed <= 1.0:
+        raise ValueError(f"{name} must be a finite number in [0, 1].")
+    return parsed
+
+
+def _boolean(value: object, name: str) -> bool:
+    """Validate and return a Boolean value."""
+    if not isinstance(value, (bool, np.bool_)):
+        raise TypeError(f"{name} must be a bool.")
+    return bool(value)
+
+
+def _symbol(value: object, name: str) -> str:
+    """Validate and return a non-empty plain Python string."""
+    if not isinstance(value, str) or not value:
+        raise ValueError(f"{name} must be a non-empty string.")
+    return str(value)
+
+
+def _resolve_dependency_pairs(
+    n_deps: int | None,
+    dependency_pairs: Sequence[tuple[str, str]] | None,
+) -> tuple[tuple[str, str], ...]:
+    """Resolve generated or explicit dependency pairs and validate their roles."""
+    if dependency_pairs is None:
+        resolved_n_deps = 1 if n_deps is None else _positive_int(n_deps, "n_deps")
+        pairs = tuple((f"A{index}", f"B{index}") for index in range(resolved_n_deps))
+    else:
+        raw_pairs = list(dependency_pairs)
+        if not raw_pairs:
+            raise ValueError("dependency_pairs must contain at least one pair.")
+
+        parsed_pairs: list[tuple[str, str]] = []
+        for index, pair in enumerate(raw_pairs):
+            if isinstance(pair, (str, bytes)):
+                raise ValueError(f"dependency_pairs[{index}] must contain exactly two symbols.")
+            try:
+                pair_items = list(pair)
+            except TypeError as exc:
+                raise ValueError(f"dependency_pairs[{index}] must contain exactly two symbols.") from exc
+            if len(pair_items) != 2:
+                raise ValueError(f"dependency_pairs[{index}] must contain exactly two symbols.")
+            start = _symbol(pair_items[0], f"dependency_pairs[{index}][0]")
+            terminal = _symbol(pair_items[1], f"dependency_pairs[{index}][1]")
+            parsed_pairs.append((start, terminal))
+        pairs = tuple(parsed_pairs)
+
+        if n_deps is not None and _positive_int(n_deps, "n_deps") != len(pairs):
+            raise ValueError("n_deps must match the number of dependency_pairs.")
+
+    if len(set(pairs)) != len(pairs):
+        raise ValueError("dependency_pairs must be unique.")
+
+    starts = [start for start, _ in pairs]
+    terminals = [terminal for _, terminal in pairs]
+    if len(set(starts)) != len(starts):
+        raise ValueError("Dependency start symbols must be unique.")
+    if len(set(terminals)) != len(terminals):
+        raise ValueError("Dependency terminal symbols must be unique.")
+    if set(starts) & set(terminals):
+        raise ValueError("Dependency start and terminal symbols must be disjoint.")
+    return pairs
+
+
+class _NonAdjacentDependenciesBase(SymbolicSequencer, ABC):
+    """Shared validation, finite sampling, violation, and Trial infrastructure."""
+
+    intrinsic_target_granularities: ClassVar[dict[str, str]] = {"grammaticality": "per_trial"}
+
+    def __init__(
+        self,
+        *,
+        label: str,
+        n_deps: int | None,
+        dependency_pairs: Sequence[tuple[str, str]] | None,
+        extra_symbols: Sequence[str] = (),
+        eos: str = "#",
+        rng: np.random.Generator | None = None,
+        seed: int | None = None,
+        verbose: bool = True,
+    ) -> None:
+        """
+        Initialize shared non-adjacent dependency state.
+
+        Parameters
+        ----------
+        label : str
+            Generator label.
+        n_deps : int or None
+            Number of generated dependency pairs when ``dependency_pairs`` is omitted.
+        dependency_pairs : sequence of tuple of str or None
+            Explicit start-terminal pairs.
+        extra_symbols : sequence of str, optional
+            Additional symbol roles, such as fillers.
+        eos : str, optional
+            End-of-sequence symbol. It is not emitted in generated frames.
+        rng : numpy.random.Generator or None, optional
+            Random number generator. Takes precedence over ``seed``.
+        seed : int or None, optional
+            Seed used when ``rng`` is omitted.
+        verbose : bool, optional
+            Whether to log construction details.
+        """
+        self.label = _symbol(label, "label")
+        self.dependency_pairs = _resolve_dependency_pairs(n_deps, dependency_pairs)
+        self.n_deps = len(self.dependency_pairs)
+        self.eos = _symbol(eos, "eos")
+
+        parsed_extra_symbols = tuple(_symbol(item, "extra symbol") for item in extra_symbols)
+        dependency_symbols = {symbol for pair in self.dependency_pairs for symbol in pair}
+        if dependency_symbols & set(parsed_extra_symbols):
+            raise ValueError("Dependency symbols and extra symbols must be disjoint.")
+        if self.eos in dependency_symbols or self.eos in parsed_extra_symbols:
+            raise ValueError("eos must not overlap with a generated symbol.")
+
+        if rng is not None and not isinstance(rng, np.random.Generator):
+            raise TypeError("rng must be a numpy.random.Generator or None.")
+        self.rng = rng if rng is not None else np.random.default_rng(seed)
+        if verbose and rng is None and seed is None:
+            logger.warning("%s sequences will not be reproducible.", type(self).__name__)
+
+        alphabet = sorted(dependency_symbols | set(parsed_extra_symbols))
+        super().__init__(
+            label=self.label,
+            alphabet_size=len(alphabet),
+            alphabet=alphabet,
+            rng=self.rng,
+            verbose=verbose,
+        )
+
+        self.start_symbols = [start for start, _ in self.dependency_pairs]
+        self.terminal_symbols = [terminal for _, terminal in self.dependency_pairs]
+
+        if verbose:
+            self.print()
+
+    def print(self) -> None:
+        """Log the generator's resolved symbol roles."""
+        logger.info("***************************************************************************")
+        logger.info("Non-adjacent dependency generator: %s", self.label)
+        logger.info("Paradigm: %s", type(self).__name__)
+        logger.info("Alphabet: %s", self.alphabet)
+        logger.info("Dependency pairs: %s", self.dependency_pairs)
+
+    @abstractmethod
+    def _apply_violation(self, frame: _Frame) -> None:
+        """Modify a generated frame in place so it violates the subclass rule."""
+
+    def _sample_one(
+        self,
+        support_size: int,
+        frame_from_rank: Callable[[int], _Frame],
+        *,
+        violation: bool,
+    ) -> tuple[_Frame, bool]:
+        """Sample one frame uniformly from a finite support."""
+        parsed_violation = _boolean(violation, "violation")
+        rank = int(self.rng.integers(support_size))
+        frame = frame_from_rank(rank)
+        if parsed_violation:
+            self._require_violation_support()
+            self._apply_violation(frame)
+        return frame, not parsed_violation
+
+    def _sample_batch(
+        self,
+        n_samples: int,
+        support_size: int,
+        frame_from_rank: Callable[[int], _Frame],
+        *,
+        frac_violations: float,
+        replace: bool,
+        strict: bool,
+    ) -> tuple[list[_Frame], list[bool]]:
+        """Sample a batch and apply an exact floor-rounded violation fraction."""
+        requested = _nonnegative_int(n_samples, "n_samples")
+        fraction = _fraction(frac_violations, "frac_violations")
+        parsed_replace = _boolean(replace, "replace")
+        parsed_strict = _boolean(strict, "strict")
+
+        actual = requested
+        if not parsed_replace and requested > support_size:
+            if parsed_strict:
+                raise ValueError(f"Cannot generate {requested} unique strings from a support of size {support_size}.")
+            actual = support_size
+            logger.warning(
+                "Requested %d unique strings from a support of size %d; returning the complete support.",
+                requested,
+                support_size,
+            )
+
+        if support_size > np.iinfo(np.int64).max:
+            raise ValueError("The configured finite support is too large to sample by rank.")
+
+        if actual == 0:
+            ranks: list[int] = []
         else:
-            flattened.append(item)
-    return flattened
+            sampled = self.rng.choice(support_size, size=actual, replace=parsed_replace)
+            ranks = [int(rank) for rank in np.atleast_1d(sampled)]
+        frames = [frame_from_rank(rank) for rank in ranks]
+
+        grammaticality = [True] * actual
+        n_violations = int(np.floor(fraction * actual))
+        if n_violations:
+            self._require_violation_support()
+            violation_indices = self.rng.choice(actual, size=n_violations, replace=False)
+            for raw_index in np.atleast_1d(violation_indices):
+                index = int(raw_index)
+                self._apply_violation(frames[index])
+                grammaticality[index] = False
+
+        return frames, grammaticality
+
+    def _require_violation_support(self) -> None:
+        """Raise when the configured pair set cannot express a violation."""
+        if self.n_deps < 2:
+            raise ValueError("At least two dependency pairs are required to generate a violation.")
+
+    def _intrinsic_targets(self, frame: _Frame, grammatical: bool) -> dict[str, Target]:
+        """Build intrinsic targets shared by every NAD variant."""
+        return {"grammaticality": Target(values=grammatical, mask=None, granularity="per_trial")}
+
+    def _to_trial(self, frame: _Frame, grammatical: bool) -> Trial:
+        """Convert an internal frame to the public Trial representation."""
+        meta: dict[str, object] = {
+            "paradigm": type(self).__name__,
+            "label": self.label,
+            "n_deps": self.n_deps,
+            "length": len(frame.symbols),
+            "grammatical": grammatical,
+        }
+        if frame.dependency_length is not None:
+            meta["dependency_length"] = frame.dependency_length
+        if frame.dependency_order is not None:
+            meta["dependency_order"] = list(frame.dependency_order)
+
+        return Trial(
+            symbols=list(frame.symbols),
+            meta=meta,
+            intrinsic_targets=self._intrinsic_targets(frame, grammatical),
+        )
 
 
 @register("NonAdjacentDependencies")
-class NonAdjacentDependencies(SymbolicSequencer):
-    """
-    Generate input and output sequences for tasks involving non-adjacent dependencies.
-
-    Each input string consists of a frame of the type "A (n*X) B", where A and B are
-    the dependents and X is the filler. `n` represents the span of the dependency
-    (how many intervening items).
-
-    References
-    ----------
-    [1] Fitz, H. (2011). A Liquid-State Model of Variability Effects in Learning
-        Nonadjacent Dependencies. CogSci 2011 Proceedings, 897–902.
-    [2] Lazar, A. (2009). SORN: a Self-organizing Recurrent Neural Network. Frontiers
-        in Computational Neuroscience, 3(October), 23.
-    [3] Onnis, ...
-    """
+class NonAdjacentDependencies(_NonAdjacentDependenciesBase):
+    """Generate frames of the form ``A_i X...X B_i``."""
 
     intrinsic_target_granularities: ClassVar[dict[str, str]] = {
-        "grammaticality": "per_trial",
+        **_NonAdjacentDependenciesBase.intrinsic_target_granularities,
         "pair_index": "per_trial",
     }
 
     def __init__(
         self,
         label: str = "Default_NAD",
-        n_deps: int | None = 1,
-        n_unique_fillers: int | None = 1,
-        dependency_pairs: list[tuple[str, str]] | None = None,
-        fillers: list[str] | None = None,
+        n_deps: int | None = None,
+        n_unique_fillers: int = 1,
+        dependency_pairs: Sequence[tuple[str, str]] | None = None,
+        fillers: Sequence[str] | None = None,
         eos: str = "#",
         rng: np.random.Generator | None = None,
         seed: int | None = None,
         verbose: bool = True,
-    ):
+    ) -> None:
         """
-        Initialize a NonAdjacentDependencies instance.
+        Initialize a simple non-adjacent dependency generator.
 
         Parameters
         ----------
-        label : str
-            Grammar label.
-        n_deps : int
-            Number of unique "words" or "frames" (A-B pairs). Each new frame is a novel dependency.
-        n_unique_fillers : int
-            Number of unique filler symbols.
-        dependency_pairs : list of tuples, optional
-            List of tuples containing the dependent element pairs with the structure (A1, B1). If None, the default
-            is to generate the pairs based on the vocabulary size using pairs of the form (A1, B1).
-        fillers : list of str, optional
-            List of filler symbols. If None, the default is to generate the fillers based on the filler variability
-            using symbols X1, X2, ...
+        label : str, optional
+            Generator label.
+        n_deps : int or None, optional
+            Number of generated dependency pairs. Defaults to one when pairs are omitted.
+        n_unique_fillers : int, optional
+            Number of generated filler symbols when ``fillers`` is omitted.
+        dependency_pairs : sequence of tuple of str or None, optional
+            Explicit start-terminal dependency pairs.
+        fillers : sequence of str or None, optional
+            Explicit filler symbols. This takes precedence over ``n_unique_fillers``.
         eos : str, optional
-            End-of-string marker. Default is "#".
-        rng : np.random.Generator, optional
-            Random number generator instance for reproducibility. If None, a new
-            default generator is created.
+            End-of-sequence symbol. It is not emitted in generated frames.
+        rng : numpy.random.Generator or None, optional
+            Random number generator. Takes precedence over ``seed``.
+        seed : int or None, optional
+            Seed used when ``rng`` is omitted.
         verbose : bool, optional
-            If True, logs the generation process. Default is True.
+            Whether to log construction details.
         """
-        logger.info("Creating NonAdjacentDependencies instance...")
-
-        self.label = label
-
-        if rng is None:
-            self.rng = np.random.default_rng(seed)
-            if seed is None:
-                logger.warning("NonAdjacentDependencies sequences will not be reproducible!")
-        else:
-            self.rng = rng
-
-        # parse fillers
         if fillers is None:
-            self.fillers = [f"X{i}" for i in range(n_unique_fillers)]
-            self.n_unique_fillers = n_unique_fillers
+            filler_count = _nonnegative_int(n_unique_fillers, "n_unique_fillers")
+            parsed_fillers = tuple(f"X{index}" for index in range(filler_count))
         else:
-            self.fillers = fillers
-            self.n_unique_fillers = len(np.unique(np.array(self.fillers)))
-            logger.info(f"Updated filler variability to {self.n_unique_fillers} based on provided fillers {fillers}.")
-            assert len(self.fillers) == self.n_unique_fillers, "Provided fillers must be unique."
+            parsed_fillers = tuple(_symbol(filler, "filler") for filler in fillers)
+            if len(set(parsed_fillers)) != len(parsed_fillers):
+                raise ValueError("fillers must be unique.")
 
-        # parse dependent elements
-        # TODO include more detailed checks
-        if dependency_pairs is None:
-            self.dependency_pairs = [(f"A{i}", f"B{i}") for i in range(n_deps)]
-            self.n_deps = n_deps
-        else:
-            self.dependency_pairs = dependency_pairs
-            self.n_deps = len(set(dependency_pairs))
-            logger.info(f"Updated vocabulary size to {self.n_deps} based on provided dependent elements.")
-            assert len(self.dependency_pairs) == self.n_deps, "Provided dependent elements must be unique."
-
-        self.vocabulary = self.generate_vocabulary(verbose=False)
-        self.vocabulary_size = len(self.vocabulary)
-        # TODO expected behavior for accepted patterns?
-        # self.accepted_patterns = [f"A{i}B{i}" for i in range(vocabulary_size)]
-
-        all_symbols = _flatten_symbols(self.dependency_pairs + self.fillers)
-        unique_symbols = list(np.unique(all_symbols))  # alphabet
-
+        self.fillers = parsed_fillers
+        self.n_unique_fillers: int = len(parsed_fillers)
         super().__init__(
-            label=self.label,
-            alphabet_size=len(unique_symbols),
-            alphabet=unique_symbols,
-            rng=self.rng,
+            label=label,
+            n_deps=n_deps,
+            dependency_pairs=dependency_pairs,
+            extra_symbols=self.fillers,
+            eos=eos,
+            rng=rng,
+            seed=seed,
+            verbose=verbose,
         )
 
-        self.start_symbols = [d[0] for d in self.dependency_pairs]
-        self.terminal_symbols = [d[1] for d in self.dependency_pairs]
-        self.eos = eos
+    def _generation_parameters(self, filler_len: int, randomize_fillers: bool) -> tuple[int, bool]:
+        """Validate per-generation filler parameters."""
+        return _nonnegative_int(filler_len, "filler_len"), _boolean(randomize_fillers, "randomize_fillers")
 
-        if verbose:
-            self.print()
+    def _filler_pattern_count(self, filler_len: int, randomize_fillers: bool) -> int:
+        """Return the number of distinct filler patterns for one dependency pair."""
+        if filler_len == 0 or not self.fillers:
+            return 1
+        if randomize_fillers:
+            return int(self.n_unique_fillers**filler_len)
+        return self.n_unique_fillers
 
-    def print(self):
-        """
-        Displays all the relevant information.
-        """
-        logger.info("***************************************************************************")
-        logger.info(f"Non-adjacent dependency generator: {self.label}")
-        logger.info(f"Alphabet: {self.alphabet}")
-        logger.info(f"Start symbols: {self.start_symbols}")
-        logger.info(f"Terminal symbols: {self.terminal_symbols}")
-        logger.info(f"Fillers: {self.fillers}")
+    def _filler_pattern(self, rank: int, filler_len: int, randomize_fillers: bool) -> list[str]:
+        """Decode one filler-pattern rank into concrete symbols."""
+        if filler_len == 0 or not self.fillers:
+            return []
+        if not randomize_fillers:
+            return [self.fillers[rank]] * filler_len
 
-    # TODO consider adding generators
+        fillers = [""] * filler_len
+        for position in range(filler_len - 1, -1, -1):
+            rank, filler_index = divmod(rank, self.n_unique_fillers)
+            fillers[position] = self.fillers[filler_index]
+        return fillers
+
+    def _support(self, filler_len: int, randomize_fillers: bool) -> tuple[int, Callable[[int], _Frame]]:
+        """Return support cardinality and its rank decoder."""
+        pattern_count = self._filler_pattern_count(filler_len, randomize_fillers)
+
+        def frame_from_rank(rank: int) -> _Frame:
+            pair_index, pattern_rank = divmod(rank, pattern_count)
+            start, terminal = self.dependency_pairs[pair_index]
+            filler_pattern = self._filler_pattern(pattern_rank, filler_len, randomize_fillers)
+            return _Frame(
+                symbols=[start, *filler_pattern, terminal],
+                pair_index=pair_index,
+                dependency_length=len(filler_pattern),
+            )
+
+        return self.n_deps * pattern_count, frame_from_rank
+
+    def _apply_violation(self, frame: _Frame) -> None:
+        """Replace a frame's expected terminal with a different terminal."""
+        expected_terminal = frame.symbols[-1]
+        candidates = [terminal for terminal in self.terminal_symbols if terminal != expected_terminal]
+        frame.symbols[-1] = candidates[int(self.rng.integers(len(candidates)))]
+
+    def _intrinsic_targets(self, frame: _Frame, grammatical: bool) -> dict[str, Target]:
+        """Add the selected dependency pair index to common intrinsic targets."""
+        targets = super()._intrinsic_targets(frame, grammatical)
+        targets["pair_index"] = Target(values=frame.pair_index, mask=None, granularity="per_trial")
+        return targets
+
     def generate_string(
-        self, filler_len: int = 1, randomize_fillers: bool = False, generator: bool = False
+        self,
+        filler_len: int = 1,
+        randomize_fillers: bool = False,
+        violation: bool = False,
     ) -> list[str]:
         """
-        Generate an individual string, 'word' or frame.
+        Generate one simple dependency frame.
 
         Parameters
         ----------
-        n_fillers : int, optional
-            Number of fillers elements (dependency length) in the string. Default is 1.
+        filler_len : int, optional
+            Number of intervening filler symbols.
         randomize_fillers : bool, optional
-            Whether to randomize the fillers if multiple present (e.g., A1 X1 X2 B1). Default is False.
-        generator : bool, optional
-            Retrieve the string as a generator (True) or a list (False). Default is False.
+            If ``False``, repeat one filler; otherwise sample independent filler positions.
+        violation : bool, optional
+            Whether to emit a mismatched terminal.
 
         Returns
         -------
         list of str
-            The generated string as a list of symbols.
-
-        Examples
-        --------
-        >>> nAD = NonAdjacentDependencies(vocabulary_size=3, filler_variability=2, dependency_length=2)
-        >>> nAD.generate_string()
-        ['A2', 'X1', 'X1', 'B2']
-        >>> nAD.generate_string(randomize_fillers=True)
-        ['A1', 'X1', 'X0', 'B1']
+            Generated symbols.
         """
-        # select a random dependent element pair
-        d1, d2 = self.dependency_pairs[self.rng.integers(self.n_deps)]
+        filler_len, randomize_fillers = self._generation_parameters(filler_len, randomize_fillers)
+        support_size, frame_from_rank = self._support(filler_len, randomize_fillers)
+        frame, _ = self._sample_one(support_size, frame_from_rank, violation=violation)
+        return frame.symbols
 
-        if len(self.fillers) > 0:
-            if randomize_fillers:
-                fillers = self.rng.choice(np.array(self.fillers, dtype=object), filler_len, replace=True).tolist()
-            else:
-                fillers = filler_len * [self.rng.choice(np.array(self.fillers, dtype=object))]  # choose one randomly
-            string = [d1] + fillers + [d2]
-        else:
-            logger.warning("No fillers provided, using only the dependent element.")
-            string = [d1, d2]
+    def generate_vocabulary(
+        self,
+        filler_len: int = 1,
+        randomize_fillers: bool = False,
+        verbose: bool = True,
+    ) -> list[list[str]]:
+        """
+        Enumerate every distinct grammatical frame for the requested filler policy.
 
-        if generator:
-            raise NotImplementedError("Generator not implemented")
-        else:
-            return _flatten_symbols(string)
+        Parameters
+        ----------
+        filler_len : int, optional
+            Number of intervening filler symbols.
+        randomize_fillers : bool, optional
+            Whether filler positions vary independently.
+        verbose : bool, optional
+            Whether to log enumeration.
 
-    # ============================ Trial-based API ============================
+        Returns
+        -------
+        list of list of str
+            Complete grammatical support.
+        """
+        filler_len, randomize_fillers = self._generation_parameters(filler_len, randomize_fillers)
+        if verbose:
+            logger.info("Enumerating the complete support for %s.", self.label)
+        support_size, frame_from_rank = self._support(filler_len, randomize_fillers)
+        return [frame_from_rank(rank).symbols for rank in range(support_size)]
+
+    def generate_string_set(
+        self,
+        n_samples: int,
+        filler_len: int = 1,
+        randomize_fillers: bool = False,
+        frac_violations: float = 0.0,
+        replace: bool = True,
+        strict: bool = True,
+    ) -> tuple[list[list[str]], list[bool]]:
+        """
+        Generate a labeled batch of simple dependency frames.
+
+        Parameters
+        ----------
+        n_samples : int
+            Requested number of frames.
+        filler_len : int, optional
+            Number of intervening filler symbols.
+        randomize_fillers : bool, optional
+            Whether filler positions vary independently.
+        frac_violations : float, optional
+            Fraction of the returned batch made ungrammatical, rounded down.
+        replace : bool, optional
+            Whether valid configurations may repeat.
+        strict : bool, optional
+            Whether oversubscribed without-replacement requests raise an error.
+
+        Returns
+        -------
+        tuple of list of list of str and list of bool
+            Generated frames and aligned grammaticality labels.
+        """
+        filler_len, randomize_fillers = self._generation_parameters(filler_len, randomize_fillers)
+        support_size, frame_from_rank = self._support(filler_len, randomize_fillers)
+        frames, grammaticality = self._sample_batch(
+            n_samples,
+            support_size,
+            frame_from_rank,
+            frac_violations=frac_violations,
+            replace=replace,
+            strict=strict,
+        )
+        return [frame.symbols for frame in frames], grammaticality
 
     def generate_trial(
         self,
         filler_len: int = 1,
         randomize_fillers: bool = False,
-        **kwargs,
+        violation: bool = False,
     ) -> Trial:
-        """Generate one NAD Trial.
-
-        Always produces a grammatical frame (matching dependents A_i...B_i).
-        Targets:
-        - ``grammaticality``: per-trial bool (always True for this method)
-        - ``pair_index``: per-trial int — index of the dependency pair used
         """
-        symbols = self.generate_string(filler_len=filler_len, randomize_fillers=randomize_fillers)
-        # recover which dependency pair was used (first and last tokens)
-        pair = (symbols[0], symbols[-1])
-        try:
-            pair_index = self.dependency_pairs.index(pair)
-        except ValueError:
-            pair_index = None  # defensive — should not happen for grammatical strings
-
-        intrinsic_targets = {
-            "grammaticality": Target(values=True, mask=None, granularity="per_trial"),
-            "pair_index": Target(values=pair_index, mask=None, granularity="per_trial"),
-        }
-        meta = {
-            "paradigm": "NonAdjacentDependencies",
-            "label": self.label,
-            "dependency_length": filler_len,
-            "n_deps": self.n_deps,
-            "length": len(symbols),
-        }
-        return Trial(symbols=symbols, meta=meta, intrinsic_targets=intrinsic_targets)
-
-    # TODO rename function
-    def generate_vocabulary(self, filler_len: int | None = None, generator: bool = False, verbose: bool = True):
-        """
-        Generate the complete string set (all frames/words) for the provided set of dependent elements with `n_fillers`
-        fillers. This can only be performed for non-randomized fillers.
+        Generate one Trial with grammaticality and dependency-pair targets.
 
         Parameters
         ----------
-        n_fillers : int, optional
-            Number of fillers elements (dependency length) in the string. If None, the internal `self.n_fillers` is
-            used. Default is None.
-        generator : bool, optional
-            Retrieve the strings as generators (True) or lists (False). Default is False.
+        filler_len : int, optional
+            Number of intervening filler symbols.
+        randomize_fillers : bool, optional
+            Whether filler positions vary independently.
+        violation : bool, optional
+            Whether to emit a mismatched terminal.
 
         Returns
         -------
-        string_set : list of list of str
-            The generated string set as a list of lists of symbols.
-
+        Trial
+            Generated Trial.
         """
-        if verbose:
-            logger.info(f"Generating the complete set of words/frames, according to {self.label} rules...")
+        filler_len, randomize_fillers = self._generation_parameters(filler_len, randomize_fillers)
+        support_size, frame_from_rank = self._support(filler_len, randomize_fillers)
+        frame, grammatical = self._sample_one(support_size, frame_from_rank, violation=violation)
+        return self._to_trial(frame, grammatical)
 
-        if filler_len is None:
-            filler_len = self.n_unique_fillers
-
-        string_set = []
-
-        for d1, d2 in self.dependency_pairs:
-            if len(self.fillers) > 0:
-                for filler in self.fillers:
-                    string = [d1] + filler_len * [filler] + [d2]
-                    string_set.append(string)
-            else:
-                if verbose:
-                    logger.warning("No fillers provided, using only the dependent element.")
-                string = [d1, d2]
-                string_set.append(string)
-
-        if generator:
-            raise NotImplementedError("Generator not implemented")
-        else:
-            return string_set
-
-    # TODO consider adding option for introducing violations/deviants
-    def generate_string_set(
+    def generate_trials(
         self,
-        n_samples: int,
-        filler_len: int | None = None,
+        n: int,
+        filler_len: int = 1,
         randomize_fillers: bool = False,
         frac_violations: float = 0.0,
         replace: bool = True,
         strict: bool = True,
-        **kwargs,
-    ):
+    ) -> list[Trial]:
         """
-        Generate a string set of specified length for the experiment.
+        Generate a Trial batch with an exact floor-rounded violation fraction.
+
+        Parameters
+        ----------
+        n : int
+            Requested number of Trials.
+        filler_len : int, optional
+            Number of intervening filler symbols.
+        randomize_fillers : bool, optional
+            Whether filler positions vary independently.
+        frac_violations : float, optional
+            Fraction of returned Trials made ungrammatical, rounded down.
+        replace : bool, optional
+            Whether valid configurations may repeat.
+        strict : bool, optional
+            Whether oversubscribed without-replacement requests raise an error.
+
+        Returns
+        -------
+        list of Trial
+            Generated Trials.
+        """
+        filler_len, randomize_fillers = self._generation_parameters(filler_len, randomize_fillers)
+        support_size, frame_from_rank = self._support(filler_len, randomize_fillers)
+        frames, grammaticality = self._sample_batch(
+            n,
+            support_size,
+            frame_from_rank,
+            frac_violations=frac_violations,
+            replace=replace,
+            strict=strict,
+        )
+        return [self._to_trial(frame, grammatical) for frame, grammatical in zip(frames, grammaticality, strict=True)]
+
+
+class _OrderedNonAdjacentDependencies(_NonAdjacentDependenciesBase):
+    """Shared implementation for crossed and nested dependency orderings."""
+
+    _reverse_terminals: ClassVar[bool]
+    _default_label: ClassVar[str]
+
+    def __init__(
+        self,
+        label: str | None = None,
+        n_deps: int | None = None,
+        dependency_pairs: Sequence[tuple[str, str]] | None = None,
+        eos: str = "#",
+        rng: np.random.Generator | None = None,
+        seed: int | None = None,
+        verbose: bool = True,
+    ) -> None:
+        """
+        Initialize an ordered non-adjacent dependency generator.
+
+        Parameters
+        ----------
+        label : str or None, optional
+            Generator label. Uses the concrete variant's default when omitted.
+        n_deps : int or None, optional
+            Number of generated dependency pairs. Defaults to one when pairs are omitted.
+        dependency_pairs : sequence of tuple of str or None, optional
+            Explicit start-terminal dependency pairs.
+        eos : str, optional
+            End-of-sequence symbol. It is not emitted in generated frames.
+        rng : numpy.random.Generator or None, optional
+            Random number generator. Takes precedence over ``seed``.
+        seed : int or None, optional
+            Seed used when ``rng`` is omitted.
+        verbose : bool, optional
+            Whether to log construction details.
+        """
+        super().__init__(
+            label=self._default_label if label is None else label,
+            n_deps=n_deps,
+            dependency_pairs=dependency_pairs,
+            eos=eos,
+            rng=rng,
+            seed=seed,
+            verbose=verbose,
+        )
+
+    @staticmethod
+    def _permutation_from_rank(rank: int, size: int) -> tuple[int, ...]:
+        """Decode a lexicographic permutation rank using factoradics."""
+        remaining = list(range(size))
+        permutation: list[int] = []
+        for width in range(size, 0, -1):
+            block_size = factorial(width - 1)
+            item_index, rank = divmod(rank, block_size)
+            permutation.append(remaining.pop(item_index))
+        return tuple(permutation)
+
+    def _support(self) -> tuple[int, Callable[[int], _Frame]]:
+        """Return permutation support cardinality and rank decoder."""
+
+        def frame_from_rank(rank: int) -> _Frame:
+            dependency_order = self._permutation_from_rank(rank, self.n_deps)
+            terminal_order = dependency_order[::-1] if self._reverse_terminals else dependency_order
+            starts = [self.start_symbols[index] for index in dependency_order]
+            terminals = [self.terminal_symbols[index] for index in terminal_order]
+            return _Frame(symbols=[*starts, *terminals], dependency_order=dependency_order)
+
+        return factorial(self.n_deps), frame_from_rank
+
+    def _apply_violation(self, frame: _Frame) -> None:
+        """Swap two terminals to violate the required ordering."""
+        first, second = [int(index) for index in self.rng.choice(self.n_deps, size=2, replace=False)]
+        first += self.n_deps
+        second += self.n_deps
+        frame.symbols[first], frame.symbols[second] = frame.symbols[second], frame.symbols[first]
+
+    def generate_string(self, violation: bool = False) -> list[str]:
+        """
+        Generate one ordered dependency frame.
+
+        Parameters
+        ----------
+        violation : bool, optional
+            Whether to swap two terminals and violate the ordering.
+
+        Returns
+        -------
+        list of str
+            Generated symbols.
+        """
+        support_size, frame_from_rank = self._support()
+        frame, _ = self._sample_one(support_size, frame_from_rank, violation=violation)
+        return frame.symbols
+
+    def generate_string_set(
+        self,
+        n_samples: int,
+        frac_violations: float = 0.0,
+        replace: bool = True,
+        strict: bool = True,
+    ) -> tuple[list[list[str]], list[bool]]:
+        """
+        Generate a labeled batch of ordered dependency frames.
 
         Parameters
         ----------
         n_samples : int
-            Total number of strings to generate.
-        filler_len : int, optional
-            Number of fillers elements (dependency length) in the string. Default is 1.
-        randomize_fillers : bool, optional
-            Whether to randomize the fillers if multiple present (e.g., A1 X1 X2 B1). Default is False.
+            Requested number of frames.
         frac_violations : float, optional
-            Introduce syntactic violations in this number of strings in the set.
-        replace: bool
-            Allow repetitions of the same string(s) in the generated set.
-        strict: bool
-            If True, raise an error when the vocabulary (unique strings) is exhausted and could not generate
-            `n_samples` strings. If False, return all possible strings with warning.
+            Fraction of returned frames made ungrammatical, rounded down.
+        replace : bool, optional
+            Whether dependency orders may repeat.
+        strict : bool, optional
+            Whether oversubscribed without-replacement requests raise an error.
 
         Returns
         -------
-        string_set : list of list of str
-            The generated string set as a list of lists of symbols.
+        tuple of list of list of str and list of bool
+            Generated frames and aligned grammaticality labels.
         """
-        if frac_violations > 0:
-            raise NotImplementedError("This function is not implemented yet.")
-
-        if not replace:
-            if strict and n_samples > self.vocabulary_size:
-                raise ValueError(
-                    f"Cannot generate {n_samples} strings without replacement, vocabulary size is {self.vocabulary_size}"
-                )
-
-        logger.info(
-            f"Generating {n_samples} strings with {frac_violations}% violations, according to {self.label} rules..."
+        support_size, frame_from_rank = self._support()
+        frames, grammaticality = self._sample_batch(
+            n_samples,
+            support_size,
+            frame_from_rank,
+            frac_violations=frac_violations,
+            replace=replace,
+            strict=strict,
         )
+        return [frame.symbols for frame in frames], grammaticality
 
-        string_set = []
-
-        # generate all strings without violations, for now
-        k = 0
-        max_samples = n_samples if replace else self.vocabulary_size
-        while k < max_samples:
-            string = self.generate_string(filler_len, randomize_fillers)
-            if not replace:
-                if string not in string_set:
-                    string_set.append(string)
-                    k += 1
-            else:
-                string_set.append(string)
-                k += 1
-
-        # introduce violations
-        self._apply_non_matching_frames(string_set, frac_violations)
-
-        grammaticality = [True] * len(string_set)
-
-        return string_set, grammaticality
-
-    # TODO finish implementation
-    def _apply_non_matching_frames(self, string_set: list[list[str]], frac_violations: float = 0.5):
+    def generate_trial(self, violation: bool = False) -> Trial:
         """
-        Generate strings that violate the dependency by modifying the last (dependent) symbol in some strings.
-        This function modifies the string set in place.
-
-        TODO: currently assumes that the string_set only contains strings valid strings!!!
+        Generate one ordered-dependency Trial.
 
         Parameters
         ----------
-        string_set : list of list of str
-            The set of strings to process.
-        frac_violations : float, optional
-            Fraction of the string set to introduce violations in. Default is 0.5.
+        violation : bool, optional
+            Whether to swap two terminals and violate the ordering.
 
         Returns
         -------
-        None
+        Trial
+            Generated Trial with grammaticality and dependency-order metadata.
         """
-        idx_ng_strings = self.rng.permutation(len(string_set))[: int(frac_violations * len(string_set))]
+        support_size, frame_from_rank = self._support()
+        frame, grammatical = self._sample_one(support_size, frame_from_rank, violation=violation)
+        return self._to_trial(frame, grammatical)
 
-        for idx in idx_ng_strings:
-            violating_terminals = sorted(list(set(self.terminal_symbols) - set([string_set[idx][-1]])))
-            string_set[idx][-1] = str(self.rng.choice(violating_terminals))
-
-    def save(self, file_name=None, file_path=None):
-        """
-        Save the current NonAdjacentDependencies object to a file.
-
-        Parameters
-        ----------
-        file_name : str, optional
-            Name of the file to save. If None, the file name will be generated based on the label. Defaults to None.
-        file_path : str, optional
-            Path to the directory where the file should be saved. If None, the file will be saved in the current
-            working directory. Defaults to None.
-
-        """
-        if file_name is None:
-            if self.label == "Default_nAD":
-                file_name = f"{self.label}.pkl"
-            else:
-                file_name = f"nAD_{self.label}.pkl"
-
-        save_pickle(self, file_name, file_path)
-
-
-class CrossedNonAdjacentDependencies(SymbolicSequencer):
-    """
-    Generate input and output sequences for tasks involving crossed non-adjacent dependencies.
-    Each input string consists of a frame of the type "A1 A2 A3 B1 B2 B3".
-
-    References
-    ----------
-    """
-
-    def __init__(
+    def generate_trials(
         self,
-        label: str = "Default_Crossed_nAD",
-        vocabulary_size: int = 1,
-        dependent_elements: list[tuple[str, str]] | None = None,
-        eos: str = "#",
-        rng: np.random.Generator | None = None,
-        verbose: bool = True,
-    ):
+        n: int,
+        frac_violations: float = 0.0,
+        replace: bool = True,
+        strict: bool = True,
+    ) -> list[Trial]:
         """
-        Initialize a NonAdjacentDependencies instance.
+        Generate ordered-dependency Trials with an exact violation fraction.
 
         Parameters
         ----------
-        vocabulary_size : int
-            Number of dependent element pairs [(A1, B1), (A2, B2), ...].
-        dependent_elements : list of tuples, optional
-            List of tuples containing the dependent element pairs with the structure (A1, B1). If None, the default
-            is to generate the pairs based on the vocabulary size using pairs of the form (A1, B1).
-        eos : str, optional
-            End-of-string marker. Default is "#".
-        rng : np.random.Generator, optional
-            Random number generator instance for reproducibility. If None, a new
-            default generator is created.
-        verbose : bool, optional
-            If True, logs the generation process. Default is True.
-        """
-        logger.info("Creating CrossedNonAdjacentDependencies instance...")
-
-        self.label = label
-
-        if rng is None:
-            self.rng = np.random.default_rng()
-            logger.warning("NonAdjacentDependencies sequences will not be reproducible!")
-        else:
-            self.rng = rng
-
-        # parse dependent elements  TODO this should probably include more detailed checks
-        if dependent_elements is None:
-            self.dependent_elements = [(f"A{i}", f"B{i}") for i in range(vocabulary_size)]
-            self.vocabulary_size = vocabulary_size
-        else:
-            self.dependent_elements = dependent_elements
-            self.vocabulary_size = len(np.unique(np.array(dependent_elements)))
-            logger.info(f"Updated vocabulary size to {self.vocabulary_size} based on provided dependent elements.")
-            assert len(self.dependent_elements) == self.vocabulary_size, "Provided dependent elements must be unique."
-
-        unique_symbols = list(np.unique(list(collapse(self.dependent_elements))))  # alphabet
-        unique_symbols = [str(s) for s in unique_symbols]
-
-        super().__init__(
-            label=self.label,
-            alphabet_size=len(unique_symbols),
-            alphabet=unique_symbols,
-            rng=self.rng,
-        )
-
-        self.start_symbols = [d[0] for d in self.dependent_elements]
-        self.terminal_symbols = [d[1] for d in self.dependent_elements]
-
-        if verbose:
-            self.print()
-
-    def print(self):
-        """
-        Displays all the relevant information.
-        """
-        logger.info("***************************************************************************")
-        logger.info(f"Crossed non-adjacent dependency generator: {self.label}")
-        logger.info(f"Alphabet: {self.alphabet}")
-        logger.info(f"Start symbols: {self.start_symbols}")
-        logger.info(f"Terminal symbols: {self.terminal_symbols}")
-
-    def generate_string(self, generator: bool = False) -> list[str]:
-        """
-        Generate an random string with crossed non-adjacent dependencies.
-
-        Parameters
-        ----------
-        n_fillers : int, optional
-            Number of fillers elements (dependency length) in the string. Default is 1.
-        randomize_fillers : bool, optional
-            Whether to randomize the fillers if multiple present (e.g., A1 X1 X2 B1). Default is False.
-        generator : bool, optional
-            Retrieve the string as a generator (True) or a list (False). Default is False.
-
-        Returns
-        -------
-        list of str
-            The generated string as a list of symbols.
-
-        Examples
-        --------
-        """
-        dep_start = []
-        dep_end = []
-
-        shuffled_idxs = self.rng.permutation(np.arange(self.vocabulary_size))
-        for idx in shuffled_idxs:
-            dep_start.append(self.dependent_elements[idx][0])
-            dep_end.append(self.dependent_elements[idx][1])
-
-        string = dep_start + dep_end
-
-        if generator:
-            raise NotImplementedError("Generator not implemented")
-        else:
-            return string
-
-    # TODO consider adding option for introducing violations/deviants
-    def generate_string_set(self, set_length: int, frac_violations: float = 0.0):
-        """
-        Generate a string set of specified length for the experiment.
-
-        Parameters
-        ----------
-        set_length : int
-            Total number of strings to generate.
+        n : int
+            Requested number of Trials.
         frac_violations : float, optional
-            Introduce syntactic violations in this number of strings in the set.
+            Fraction of returned Trials made ungrammatical, rounded down.
+        replace : bool, optional
+            Whether dependency orders may repeat.
+        strict : bool, optional
+            Whether oversubscribed without-replacement requests raise an error.
 
         Returns
         -------
-        string_set : list of list of str
-            The generated string set as a list of lists of symbols.
+        list of Trial
+            Generated Trials.
         """
-        if frac_violations > 0:
-            raise NotImplementedError("This function is not implemented yet.")
-
-        logger.info(
-            f"Generating {set_length} strings with {frac_violations}% violations, according to {self.label} rules..."
+        support_size, frame_from_rank = self._support()
+        frames, grammaticality = self._sample_batch(
+            n,
+            support_size,
+            frame_from_rank,
+            frac_violations=frac_violations,
+            replace=replace,
+            strict=strict,
         )
-        string_set = []
-
-        # generate all strings without violations, for now
-        for _ in range(set_length):
-            string = self.generate_string()
-            string_set.append(string)
-
-        # # introduce violations
-        # self._non_matching_frames(string_set, frac_violations)
-
-        return string_set
-
-    def save(self, file_name=None, file_path=None):
-        """
-        Save the current CrossedNonAdjacentDependencies object to a file.
-
-        Parameters
-        ----------
-        file_name : str, optional
-            Name of the file to save. If None, the file name will be generated based on the label. Defaults to None.
-        file_path : str, optional
-            Path to the directory where the file should be saved. If None, the file will be saved in the current
-            working directory. Defaults to None.
-
-        """
-        if file_name is None:
-            if self.label == "Default_Crossed_nAD":
-                file_name = f"{self.label}.pkl"
-            else:
-                file_name = f"Crossed_nAD_{self.label}.pkl"
-
-        save_pickle(self, file_name, file_path)
-
-    # def _non_matching_frames(self, string_set: list[list[str]], frac_violations: float = 0.5):
-    #     """
-    #     Generate strings that violate the dependency by modifying the last (dependent) symbol in some strings.
-    #     This function modifies the string set in place.
-
-    #     Parameters
-    #     ----------
-    #     string_set : list of list of str
-    #         The set of strings to process.
-    #     frac_violations : float, optional
-    #         Fraction of the string set to introduce violations in. Default is 0.5.
-
-    #     Returns
-    #     -------
-    #     None
-    #     """
-    #     idx_ng_strings = self.rng.permutation(len(string_set))[: int(frac_violations * len(string_set))]
-
-    #     for idx in idx_ng_strings:
-    #         violating_terminals = sorted(list(set(self.terminal_symbols) - set([string_set[idx][-1]])))
-    #         string_set[idx][-1] = str(self.rng.choice(violating_terminals))
+        return [self._to_trial(frame, grammatical) for frame, grammatical in zip(frames, grammaticality, strict=True)]
 
 
-# TODO add fillers / noise
-class NestedNonAdjacentDependencies(SymbolicSequencer):
-    """
-        Generate input and output sequences for tasks involving nested non-adjacent dependencies.
-        Each input string consists of a frame of the type "A1 A2 A3 B3 B2 B1".
-    A2 A1 A3 B3 B1 B2
+@register("CrossedNonAdjacentDependencies")
+class CrossedNonAdjacentDependencies(_OrderedNonAdjacentDependencies):
+    """Generate crossed frames ``A_i A_j ... B_i B_j ...``."""
 
-        References
-        ----------
-    """
+    _reverse_terminals = False
+    _default_label = "Default_Crossed_NAD"
 
-    def __init__(
-        self,
-        label: str = "Default_Nested_nAD",
-        vocabulary_size: int = 1,
-        dependent_elements: list[tuple[str, str]] | None = None,
-        eos: str = "#",
-        rng: np.random.Generator | None = None,
-        verbose: bool = True,
-    ):
-        """
-        Initialize a NestedNonAdjacentDependencies instance.
 
-        Parameters
-        ----------
-        vocabulary_size : int
-            Number of dependent element pairs [(A1, B1), (A2, B2), ...].
-        dependent_elements : list of tuples, optional
-            List of tuples containing the dependent element pairs with the structure (A1, B1). If None, the default
-            is to generate the pairs based on the vocabulary size using pairs of the form (A1, B1).
-        eos : str, optional
-            End-of-string marker. Default is "#".
-        rng : np.random.Generator, optional
-            Random number generator instance for reproducibility. If None, a new
-            default generator is created.
-        verbose : bool, optional
-            If True, logs the generation process. Default is True.
-        """
-        logger.info("Creating Nested NonAdjacentDependencies instance...")
+@register("NestedNonAdjacentDependencies")
+class NestedNonAdjacentDependencies(_OrderedNonAdjacentDependencies):
+    """Generate nested frames ``A_i A_j ... B_j B_i ...``."""
 
-        self.label = label
-
-        if rng is None:
-            self.rng = np.random.default_rng()
-            logger.warning("Nested NonAdjacentDependencies sequences will not be reproducible!")
-        else:
-            self.rng = rng
-
-        # parse dependent elements
-        # TODO include more detailed checks
-        if dependent_elements is None:
-            self.dependent_elements = [(f"A{i}", f"B{i}") for i in range(vocabulary_size)]
-            self.vocabulary_size = vocabulary_size
-        else:
-            self.dependent_elements = dependent_elements
-            self.vocabulary_size = len(np.unique(np.array(dependent_elements))) // 2
-            logger.info(f"Updated vocabulary size to {self.vocabulary_size} based on provided dependent elements.")
-            assert len(self.dependent_elements) == self.vocabulary_size, "Provided dependent elements must be unique."
-
-        unique_symbols = list(np.unique(list(collapse(self.dependent_elements))))  # alphabet
-        unique_symbols = [str(s) for s in unique_symbols]
-
-        super().__init__(
-            label=self.label,
-            alphabet_size=len(unique_symbols),
-            alphabet=unique_symbols,
-            rng=self.rng,
-        )
-
-        self.start_symbols = [d[0] for d in self.dependent_elements]
-        self.terminal_symbols = [d[1] for d in self.dependent_elements]
-
-        if verbose:
-            self.print()
-
-    def print(self):
-        """
-        Displays all the relevant information.
-        """
-        logger.info("***************************************************************************")
-        logger.info(f"Crossed non-adjacent dependency generator: {self.label}")
-        logger.info(f"Alphabet: {self.alphabet}")
-        logger.info(f"Start symbols: {self.start_symbols}")
-        logger.info(f"Terminal symbols: {self.terminal_symbols}")
-
-    # TODO add option to not randomize string
-    def generate_string(self, generator: bool = False) -> list[str]:
-        """
-        Generate an random string with nested non-adjacent dependencies.
-
-        Parameters
-        ----------
-        generator : bool, optional
-            Retrieve the string as a generator (True) or a list (False). Default is False.
-
-        Returns
-        -------
-        list of str
-            The generated string as a list of symbols.
-
-        Examples
-        --------
-        """
-        if generator:
-            raise NotImplementedError("Generator not implemented")
-
-        idxs_rand = self.rng.permutation(np.arange(self.vocabulary_size))
-
-        # Create the ascending part
-        first_half = [self.start_symbols[i] for i in idxs_rand]
-        # Create the descending part in reverse order
-        second_half = [self.terminal_symbols[i] for i in idxs_rand[::-1]]
-
-        # Combine both parts into a single list
-        return first_half + second_half
-
-    # TODO consider adding option for introducing violations/deviants
-    def generate_string_set(self, set_length: int, frac_violations: float = 0.0):
-        """
-        Generate a string set of specified length for the experiment.
-
-        Parameters
-        ----------
-        set_length : int
-            Total number of strings to generate.
-        frac_violations : float, optional
-            Introduce syntactic violations in this number of strings in the set.
-
-        Returns
-        -------
-        string_set : list of list of str
-            The generated string set as a list of lists of symbols.
-        """
-        if frac_violations > 0:
-            raise NotImplementedError("This function is not implemented yet.")
-
-        logger.info(
-            f"Generating {set_length} strings with {frac_violations}% violations, according to {self.label} rules..."
-        )
-        string_set = []
-
-        # generate all strings without violations, for now
-        for _ in range(set_length):
-            string = self.generate_string()
-            string_set.append(string)
-
-        # # introduce violations
-        # self._non_matching_frames(string_set, frac_violations)
-
-        return string_set
-
-    def save(self, file_name=None, file_path=None):
-        """
-        Save the current NestedNonAdjacentDependencies object to a file.
-
-        Parameters
-        ----------
-        file_name : str, optional
-            Name of the file to save. If None, the file name will be generated based on the label. Defaults to None.
-        file_path : str, optional
-            Path to the directory where the file should be saved. If None, the file will be saved in the current
-            working directory. Defaults to None.
-
-        """
-        if file_name is None:
-            if self.label == "Default_Nested_nAD":
-                file_name = f"{self.label}.pkl"
-            else:
-                file_name = f"Nested_nAD_{self.label}.pkl"
-
-        save_pickle(self, file_name, file_path)
-
-    # def _non_matching_frames(self, string_set: list[list[str]], frac_violations: float = 0.5):
-    #     """
-    #     Generate strings that violate the dependency by modifying the last (dependent) symbol in some strings.
-    #     This function modifies the string set in place.
-
-    #     Parameters
-    #     ----------
-    #     string_set : list of list of str
-    #         The set of strings to process.
-    #     frac_violations : float, optional
-    #         Fraction of the string set to introduce violations in. Default is 0.5.
-
-    #     Returns
-    #     -------
-    #     None
-    #     """
-    #     idx_ng_strings = self.rng.permutation(len(string_set))[: int(frac_violations * len(string_set))]
-
-    #     for idx in idx_ng_strings:
-    #         violating_terminals = sorted(list(set(self.terminal_symbols) - set([string_set[idx][-1]])))
-    #         string_set[idx][-1] = str(self.rng.choice(violating_terminals))
+    _reverse_terminals = True
+    _default_label = "Default_Nested_NAD"

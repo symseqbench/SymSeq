@@ -44,6 +44,38 @@ def test_higher_order_markov_uses_indexed_context_states():
     assert _transition_probability(grammar, cb_state, by_state) == 1.0
 
 
+def test_higher_order_recognition_tracks_reachable_indexed_states():
+    sequences = [["A", "B", "X"]] * 20 + [["C", "B", "Y"]] * 20
+    grammar = infer_markov(sequences, order=2)
+
+    assert grammar.is_grammatical(["A", "B", "X"])
+    assert grammar.is_grammatical(["C", "B", "Y", grammar.eos])
+    assert not grammar.is_grammatical(["A", "B", "Y"])
+    assert not grammar.is_grammatical(["C", "B", "X", grammar.eos])
+
+
+def test_higher_order_recognition_honors_explicit_state_paths():
+    sequences = [["A", "B", "X"]] * 20 + [["C", "B", "Y"]] * 20
+    grammar = infer_markov(sequences, order=2)
+    ab_state = _state_for_context(grammar, ("A", "B"))
+    cb_state = _state_for_context(grammar, ("C", "B"))
+    bx_state = _state_for_context(grammar, ("B", "X"))
+    by_state = _state_for_context(grammar, ("B", "Y"))
+
+    assert grammar.is_grammatical(["A", ab_state, bx_state])
+    assert grammar.is_grammatical(["C", cb_state, by_state, grammar.eos])
+    assert not grammar.is_grammatical(["A", cb_state, by_state])
+
+
+def test_recognition_requires_a_complete_sequence():
+    grammar = infer_markov([["A", "B", "X"]], order=2)
+
+    assert not grammar.is_grammatical([])
+    assert not grammar.is_grammatical(["A", "B"])
+    assert not grammar.is_grammatical(["A", grammar.eos, "B", "X"])
+    assert not grammar.is_grammatical(["A", "B", "X", grammar.eos, grammar.eos])
+
+
 def test_markov_bic_selection_is_reported():
     sequences = [["A", "B"] * 20 for _ in range(10)]
 

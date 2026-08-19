@@ -314,6 +314,23 @@ class TestStringGeneration:
         for string in strings:
             assert len(string) == 5  # context + cue + 2 fillers + probe
 
+    def test_context_probs_control_generated_context(self):
+        """Test that context probabilities control the realized trial context."""
+        gen = nAX(context_probs=(1.0, 0.0), seed=42)
+
+        strings = gen.generate_string_set(n_samples=50, n_fillers=0)
+
+        assert {string[0] for string in strings} == {"1"}
+
+    @pytest.mark.parametrize(("p_target", "expected_is_target"), [(0.0, False), (1.0, True)])
+    def test_extreme_target_probabilities_control_generated_trials(self, p_target, expected_is_target):
+        """Test that extreme target probabilities control realized target status."""
+        gen = nAX(p_target=p_target, seed=42)
+
+        strings = gen.generate_string_set(n_samples=50, n_fillers=2)
+
+        assert all(gen.label_trial(string)[1] is expected_is_target for string in strings)
+
 
 class TestTrialLabeling:
     """Tests for trial labeling functionality."""
@@ -465,9 +482,8 @@ class TestTargetLureDistribution:
                 n_targets += 1
 
         target_rate = n_targets / n_samples
-        # Should be approximately 0.7 (allow variance due to grammar structure)
-        # The actual distribution is affected by the grammar's transition probabilities
-        assert 0.5 <= target_rate <= 0.85
+        # Should be approximately 0.7, allowing for sampling variance.
+        assert 0.64 <= target_rate <= 0.76
 
     def test_equal_target_lure_probability(self):
         """Test with equal target and lure probabilities."""

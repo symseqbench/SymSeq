@@ -102,7 +102,7 @@ class ArtificialGrammar(SymbolicSequencer):
         validate: bool = True,
         build_graph: bool = True,
         metadata: dict | None = None,
-        verbose: bool = True,
+        verbose: bool = False,
         start_probabilities: Mapping[str, float] | None = None,
     ):
         """
@@ -125,7 +125,10 @@ class ArtificialGrammar(SymbolicSequencer):
             states for the same symbol are numbered (see examples).
         transitions : list of tuple
             Tuples with the structure (source_state, target_state, transition probability),
-            e.g. ``[('a', 'b', 0.1), ('a', 'c', 0.3)]``.
+            e.g. ``[('a', 'b', 0.1), ('a', 'c', 0.9)]``. Probabilities
+            must be finite and non-negative, and outgoing probabilities must sum
+            to one for every state with declared transitions. The collection is
+            copied before implicit terminal-to-EOS transitions are added.
         start_states : list of str
             The possible start states. See `states` for the format.
         terminal_states : list of str
@@ -137,21 +140,24 @@ class ArtificialGrammar(SymbolicSequencer):
         seed : int, optional
             Random seed for reproducibility. Ignored if `rng` is not None. Defaults to 42.
         validate : bool, optional
-            Whether to validate the grammar. Defaults to True.
+            Whether to validate probabilistic model invariants after structural
+            parsing. Structural state and transition checks are always performed.
+            Defaults to True.
         build_graph : bool, optional
             Whether to build the networkX graph representation. Defaults to True.
         metadata : dict, optional
             Arbitrary metadata to attach to the grammar, e.g. the complexity measures reported by
             `from_constraints`. Defaults to None.
         verbose : bool, optional
-            Whether to print the grammar. Defaults to True.
+            Whether to log a summary of the grammar. Defaults to False.
         start_probabilities : mapping of str to float, optional
             Sampling probabilities for `start_states`. When omitted, start states remain uniformly distributed.
 
         Raises
         ------
         ValueError
-            If no start states are provided, or if no terminal states are provided.
+            If required state sets are empty or inconsistent, transitions are
+            malformed, or validation of the probabilistic model fails.
         """
         self.rng = rng if rng is not None else np.random.default_rng(seed)
         self.metadata = metadata
@@ -280,7 +286,7 @@ class ArtificialGrammar(SymbolicSequencer):
         eos: str = "#",
         rng: np.random.Generator | None = None,
         seed: int = 42,
-        verbose: bool = True,
+        verbose: bool = False,
         target_complexity: None | float = None,
         **synthesis_kwargs,
     ) -> ArtificialGrammar:
@@ -319,7 +325,7 @@ class ArtificialGrammar(SymbolicSequencer):
         seed : int, optional
             Random seed for reproducibility. Ignored if `rng` is not None. Defaults to 42.
         verbose : bool, optional
-            Display progress information. Defaults to True.
+            Display progress information. Defaults to False.
         target_complexity : float, optional
             Target transfer-entropy complexity of the grammar. If None, the grammar is drawn randomly under the
             constraints above; otherwise it is synthesized to match this complexity. Defaults to None.
@@ -419,45 +425,51 @@ class ArtificialGrammar(SymbolicSequencer):
 
         Notes
         -----
-        - The transition table is normalized such that the outgoing transition probabilities sum to 1.
-        - If the grammar contains terminal states, the transition table is augmented with transitions to the EOS
-          marker. The outgoing transition probabilities of these states are normalized to 1.
+        The caller-owned transition collection is copied. A probability-one EOS
+        transition is added to each terminal state that does not declare one.
+
+        Raises
+        ------
+        ValueError
+            If no transitions are supplied, a transition is malformed, or a
+            transition references an unknown state.
         """
-        assert transitions and len(transitions) > 0, "No transitions provided"
+        supplied_transitions = list(transitions)
+        if len(supplied_transitions) == 0:
+            raise ValueError("No transitions provided.")
+
+        state_names = {state.tostring() for state in self.states}
+        parsed_transitions: list[tuple[str, str, float]] = []
+        for index, transition in enumerate(supplied_transitions):
+            if not isinstance(transition, (list, tuple)) or len(transition) != 3:
+                raise ValueError(f"Transition at index {index} must be a (source, target, probability) triple.")
+
+            source, target, probability = transition
+            if not isinstance(source, str) or not isinstance(target, str):
+                raise ValueError(f"Transition at index {index} must use string state names.")
+            unknown_states = {source, target} - state_names
+            if unknown_states:
+                raise ValueError(
+                    f"Transition at index {index} references an unknown state: {sorted(unknown_states)!r}."
+                )
+            try:
+                parsed_probability = float(probability)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"Transition at index {index} must have a numeric probability.") from exc
+            parsed_transitions.append((source, target, parsed_probability))
+
+        declared_edges = {(source, target) for source, target, _ in parsed_transitions}
+        for state in self.terminal_states:
+            state_name = state.tostring()
+            if (state_name, self.eos) not in declared_edges:
+                parsed_transitions.append((state_name, self.eos, 1.0))
 
         table = np.zeros((len(self.states), len(self.states)))
+        state_idxs = {state.tostring(): index for index, state in enumerate(self.states)}
+        for source, target, probability in parsed_transitions:
+            table[state_idxs[target], state_idxs[source]] = probability
 
-        # list of terminal states without transitions to EOS
-        terminal_states_noeos = set()
-
-        # add transitions from terminal states to the EOS if not present, for now all with probability 1
-        for state in self.terminal_states:
-            trans_to_eos = [t for t in transitions if t[0] == state and t[1] == self.eos]
-            if len(trans_to_eos) == 0:
-                # probability will be normalized later
-                transitions.append((state.tostring(), self.eos, 1.0))
-                terminal_states_noeos.add(state.tostring())
-
-        # populate transition table from list
-        state_idxs = {s: i for i, s in enumerate(self.states)}
-        for src_state, tgt_state, prob in transitions:
-            src_idx = state_idxs[src_state]
-            tgt_idx = state_idxs[tgt_state]
-            table[tgt_idx, src_idx] = prob
-
-        # eos_idx = [i for i, s in enumerate(self.states) if s == self.eos]  # index of the EOS, we assume it's present
-        # normalize the outgoing transitions of terminal states which did not previously have a transition to EOS
-        for state in terminal_states_noeos:
-            # index of the state
-            state_idx = next(i for i, s in enumerate(self.states) if s == state)
-            # normalize the outgoing transitions
-            table[:, state_idx] /= table[:, state_idx].sum()
-            logger.info(
-                f"Added transition to EOS ({self.eos}) from terminal state {state}"
-                f" and normalized all outgoing probabilities."
-            )
-
-        return transitions, table
+        return parsed_transitions, table
 
     def _parse_states(self, states, start_states, terminal_states):
         """
@@ -489,13 +501,42 @@ class ArtificialGrammar(SymbolicSequencer):
         Raises
         ------
         ValueError
-            If the symbol name of a state is not in the alphabet.
+            If state declarations contain duplicates or invalid references, if EOS
+            is declared as a start or terminal state, or if a state's symbol is not
+            in the alphabet.
         """
+        declarations = {
+            "states": list(states),
+            "start_states": list(start_states),
+            "terminal_states": list(terminal_states),
+        }
+        for name, values in declarations.items():
+            if not all(isinstance(value, str) for value in values):
+                raise ValueError(f"{name} must contain only strings.")
+            if len(values) != len(set(values)):
+                raise ValueError(f"{name} contains duplicate state names.")
+
+        canonical_state_names = [State.from_string(state).tostring() for state in declarations["states"]]
+        if len(canonical_state_names) != len(set(canonical_state_names)):
+            raise ValueError("states contains duplicate canonical state names.")
+        if self.eos in declarations["start_states"] or self.eos in declarations["terminal_states"]:
+            raise ValueError("EOS cannot be declared as a start or terminal state.")
+
+        declared_states = set(declarations["states"])
+        missing_start_states = set(declarations["start_states"]) - declared_states
+        if missing_start_states:
+            raise ValueError(f"start_states contains states not present in states: {sorted(missing_start_states)!r}.")
+        missing_terminal_states = set(declarations["terminal_states"]) - declared_states
+        if missing_terminal_states:
+            raise ValueError(
+                f"terminal_states contains states not present in states: {sorted(missing_terminal_states)!r}."
+            )
+
         states_list = []
         start_states_list = []
         terminal_states_list = []
 
-        for s in states:
+        for s in declarations["states"]:
             state = State.from_string(s)  # create a State object
 
             # check if the symbol name is in the alphabet
@@ -505,10 +546,10 @@ class ArtificialGrammar(SymbolicSequencer):
             # add to the list of all, start and terminal states as appropriate
             states_list.append(state)
 
-            if s in start_states:
+            if s in declarations["start_states"]:
                 start_states_list.append(state)
                 state.start = True
-            if s in terminal_states:
+            if s in declarations["terminal_states"]:
                 terminal_states_list.append(state)
                 state.terminal = True
 
@@ -563,9 +604,7 @@ class ArtificialGrammar(SymbolicSequencer):
         return parsed
 
     def print(self):
-        """
-        Log all the relevant information about the grammar, including the transition table.
-        """
+        """Log the grammar definition and transition table."""
         logger.info("***************************************************************************")
         if self.label is not None:
             logger.info(f"Generative mechanism: {self.label}")
@@ -573,9 +612,9 @@ class ArtificialGrammar(SymbolicSequencer):
         logger.info(f"Unique states: {self.states}")
         logger.info(f"Start states: {self.start_states}")
         logger.info(f"Terminal states: {self.terminal_states}")
-        self.get_transition_table(verbose=True)
+        logger.info("Transition table (target x source):\n%s", np.array2string(self.transition_table))
 
-    def get_transition_table(self, full=True, correct_terminal_sink=False, verbose=True, binary=False):
+    def get_transition_table(self, full=True, correct_terminal_sink=False, verbose=False, binary=False):
         """
         Return a copy of the look-up table with all allowed transitions and their probabilities. If necessary,
         correct for terminal (sink) -> start transitions.
@@ -590,7 +629,7 @@ class ArtificialGrammar(SymbolicSequencer):
             If True, adds a transition from the EOS to all initial states, with the probabilities given by
             `start_probabilities` (uniform by default). Defaults to False.
         verbose : bool, optional
-            Display table. Defaults to True.
+            Display table. Defaults to False.
         binary : bool, optional
             If True, returns the adjacency matrix (1 where a transition is allowed, 0 otherwise) instead of the
             transition probabilities. Defaults to False.
@@ -671,24 +710,49 @@ class ArtificialGrammar(SymbolicSequencer):
         return binary_transitions
 
     def validate(self):
-        """
-        Verify that all the start and terminal states are members of the state set, and check whether the alphabet is
-        different from the states.
+        """Validate state membership and the probabilistic transition model.
 
         Returns
         -------
         bool or set of str
-            True if the alphabet is a subset of the states, otherwise the set of alphabet symbols that have no
-            corresponding state.
+            ``True`` if the alphabet is a subset of the unindexed state names;
+            otherwise, the alphabet symbols without an identically named state. Indexed
+            states may therefore produce a non-empty set even when their symbols are
+            represented.
 
         Raises
         ------
-        AssertionError
-            If start_states or terminal_states are not within the states, or if the terminal states contain the EOS.
+        ValueError
+            If state membership is inconsistent, EOS is used as a terminal state,
+            transitions are duplicated, probabilities are non-finite or negative, or
+            the outgoing probabilities for a state do not sum to one.
         """
-        assert set(self.start_states).issubset(set(self.states)), "Start states not in states"
-        assert set(self.terminal_states).issubset(set(self.states)), "Terminal states not in states"
-        assert len([s for s in self.terminal_states if s == self.eos]) == 0, "Terminal states should not contain EOS"
+        state_names = {state.tostring() for state in self.states}
+        start_names = {state.tostring() for state in self.start_states}
+        terminal_names = {state.tostring() for state in self.terminal_states}
+        if not start_names.issubset(state_names):
+            raise ValueError("start_states must be a subset of states.")
+        if not terminal_names.issubset(state_names):
+            raise ValueError("terminal_states must be a subset of states.")
+        if self.eos in terminal_names:
+            raise ValueError("EOS cannot be a terminal state.")
+
+        edges: set[tuple[str, str]] = set()
+        outgoing_probabilities: dict[str, float] = {}
+        for source, target, probability in self.transitions:
+            edge = (source, target)
+            if edge in edges:
+                raise ValueError(f"transitions contains a duplicate edge: {edge!r}.")
+            edges.add(edge)
+            if source not in state_names or target not in state_names:
+                raise ValueError(f"Transition {edge!r} references an unknown state.")
+            if not np.isfinite(probability) or probability < 0.0:
+                raise ValueError(f"Transition {edge!r} must have a finite, non-negative probability.")
+            outgoing_probabilities[source] = outgoing_probabilities.get(source, 0.0) + probability
+
+        for source, total in outgoing_probabilities.items():
+            if not np.isclose(total, 1.0, rtol=1e-9, atol=1e-12):
+                raise ValueError(f"Outgoing transition probabilities from {source!r} must sum to 1; got {total}.")
 
         if not set(self.alphabet).issubset(set(self.states)):
             test_var = set(self.alphabet).difference(set(self.states))
@@ -737,7 +801,7 @@ class ArtificialGrammar(SymbolicSequencer):
         self,
         min_length: int = 0,
         max_length: int = int(1e4),
-        length_range: tuple | None = None,
+        length_range: tuple[int, int] | list[int] | None = None,
         remove_eos: bool = True,
         as_states: bool = False,
         max_iter: int = int(1e3),
@@ -752,9 +816,10 @@ class ArtificialGrammar(SymbolicSequencer):
             Minimum string length, including all symbols except the EOS. Defaults to 0.
         max_length : int, optional
             Maximum string length, including all symbols except the EOS. Defaults to 1e4.
-        length_range : tuple of int, optional
-            Tuple of (min, max) for the length of each string, overriding `min_length` and `max_length`. If None,
-            only `min_length` and `max_length` are used. Defaults to None.
+        length_range : tuple of int or list of int, optional
+            Pair ``(min, max)`` for the length of each string, overriding
+            `min_length` and `max_length`. If None, only `min_length` and
+            `max_length` are used. Defaults to None.
         remove_eos : bool, optional
             If True, remove eos (e.g., '#') markers from the strings. Defaults to True.
         as_states : bool, optional
@@ -771,25 +836,37 @@ class ArtificialGrammar(SymbolicSequencer):
         Raises
         ------
         ValueError
-            If `length_range` is not a tuple of two numbers.
+            If the effective length bounds are not non-negative integers in
+            ascending order, or if `max_iter` is not a positive integer.
         RuntimeError
             If a grammatical string satisfying the length constraints cannot be generated after `max_iter` attempts.
         """
-        valid = False
-        tmp_max_tries = max_iter
-        string = []
-
         if length_range is not None:
-            if not isinstance(length_range[0], (int, float)) or not isinstance(length_range[1], (int, float)):
-                raise ValueError("Length range must be a tuple of two integers.")
+            if not isinstance(length_range, (list, tuple)) or len(length_range) != 2:
+                raise ValueError("Length range must contain exactly two integers.")
             min_length, max_length = length_range
+
+        length_bounds = (min_length, max_length)
+        if not all(isinstance(bound, (int, np.integer)) and not isinstance(bound, bool) for bound in length_bounds):
+            raise ValueError("Length bounds must be integers.")
+        min_length, max_length = (int(bound) for bound in length_bounds)
+        if min_length < 0 or max_length < 0:
+            raise ValueError("Length bounds must be non-negative integers.")
+        if min_length > max_length:
+            raise ValueError("Minimum length cannot exceed maximum length.")
+        if not isinstance(max_iter, (int, np.integer)) or isinstance(max_iter, bool) or max_iter < 1:
+            raise ValueError("max_iter must be a positive integer.")
+        max_iter = int(max_iter)
+
+        valid = False
+        string = []
 
         # index of the EOS, we assume it's present
         eos_idx = next(i for i, s in enumerate(self.states) if s == self.eos)
         start_state_idxs = [i for i, s in enumerate(self.states) if s in self.start_states]
         start_probabilities = [self.start_probabilities[self.states[index].tostring()] for index in start_state_idxs]
         # attempt generating a string until a valid one is found
-        while not valid and max_iter > 0:
+        for _ in range(max_iter):
             if self._uniform_start_sampling:
                 start_state_idx = self.rng.choice(start_state_idxs)
             else:
@@ -801,12 +878,12 @@ class ArtificialGrammar(SymbolicSequencer):
                 # check string validity by also considering the length constraints
                 valid = min_length <= len(string) - 1 <= max_length
                 valid = valid and string[-1] == self.eos  # valid if the last symbol is the EOS
+                if valid:
+                    break
 
-            max_iter -= 1
-
-        if max_iter == 0:
+        if not valid:
             raise RuntimeError(
-                f"Could not generate a grammatical string that satisfies the constraints after {tmp_max_tries} tries."
+                f"Could not generate a grammatical string that satisfies the constraints after {max_iter} tries."
             )
 
         # convert to symbols if necessary by removing indices
@@ -933,36 +1010,71 @@ class ArtificialGrammar(SymbolicSequencer):
 
         return nongramm_string
 
-    def is_grammatical(self, string: list[str]) -> bool:
-        """
-        Checks if a given string is grammatical based on the grammar's transitions. Although the string can be
-        represented as a list of states or symbols, grammaticality is always evaluated based on the non-indexed
-        states (symbols): if ['A', 'B', 'C', '#'] is grammatical, then states with any indices, such as
-        ['A', 'B', 'C(1)', '#'] or ['A(3)', 'B(0)', 'C(15)', '#'], will also be considered grammatical.
+    def is_grammatical(self, string: Sequence[str | State]) -> bool:
+        """Check whether the grammar accepts a complete symbol or state sequence.
+
+        Recognition is state-aware. For symbol input, all currently reachable states
+        that emit the next symbol are retained. This is equivalent to traversing a
+        nondeterministic finite automaton and preserves distinctions between indexed
+        states that emit the same symbol. For explicit state input, every state name
+        must follow an exact transition path.
+
+        A sequence is interpreted as symbol input when every non-EOS item belongs to
+        ``alphabet``. Otherwise, it is interpreted as explicit state input. This
+        preserves the existing convention that indexed names such as ``"B(1)"``
+        select particular states, while bare alphabet entries such as ``"B"`` denote
+        emitted symbols.
+
+        This method recognizes complete strings rather than prefixes. The EOS marker
+        may be omitted and is then appended internally. If supplied, EOS must occur
+        exactly once at the end. Empty sequences and sequences containing an internal
+        EOS marker are rejected. Transition probabilities affect sampling but not
+        structural recognition: every transition declared in ``transitions`` is
+        considered an allowed edge.
 
         Parameters
         ----------
-        string : list of str
-            The string to check, represented as a list of states or symbols.
+        string : sequence of str or State
+            Complete sequence represented as emitted symbols or explicit state names.
+            The final EOS marker is optional.
 
         Returns
         -------
         bool
-            True if the string is grammatical, False otherwise.
+            ``True`` if at least one valid start-to-EOS state path emits the supplied
+            sequence; otherwise ``False``.
         """
-        string_symbols = string_as_symbols(string)  # store string as symbols and remove indices
-
-        # Generate a set of valid transitions for fast lookup
-        valid_transitions = set(
-            [(State.from_string(src).symbol, State.from_string(tgt).symbol) for src, tgt, _ in self.transitions]
-        )
-
-        # Check if the first state is a valid start state
-        if string_symbols[0] not in string_as_symbols(self.start_states):
+        if len(string) == 0:
             return False
 
-        # Iterate over the string and check that every transition is valid
-        return all((string_symbols[i], string_symbols[i + 1]) in valid_transitions for i in range(len(string) - 1))
+        tokens = [item.tostring() if isinstance(item, State) else item for item in string]
+        if not all(isinstance(item, str) for item in tokens):
+            raise ValueError("Expected every sequence item to be a State or str.")
+        if self.eos in tokens[:-1]:
+            return False
+        if tokens[-1] != self.eos:
+            tokens.append(self.eos)
+
+        symbol_input = all(token in self.alphabet for token in tokens[:-1])
+        state_symbols = {state.tostring(): state.symbol for state in self.states}
+        successors = {state: set() for state in state_symbols}
+        for source, target, _ in self.transitions:
+            successors[source].add(target)
+
+        def matches(state: str, token: str) -> bool:
+            if token == self.eos:
+                return state == self.eos
+            if symbol_input:
+                return state_symbols[state] == token
+            return state == token
+
+        reachable = {state.tostring() for state in self.start_states if matches(state.tostring(), tokens[0])}
+        for token in tokens[1:]:
+            reachable = {target for source in reachable for target in successors[source] if matches(target, token)}
+            if not reachable:
+                return False
+
+        return self.eos in reachable
 
     def generate_nongrammatical_string(
         self,
