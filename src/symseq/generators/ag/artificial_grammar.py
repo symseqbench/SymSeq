@@ -14,6 +14,7 @@ import copy
 import logging
 import random
 import warnings
+from collections.abc import Mapping, Sequence
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from multiprocessing import cpu_count
 from typing import ClassVar
@@ -24,9 +25,12 @@ import numpy as np
 # internal imports
 from symseq.core.sequencer import SymbolicSequencer
 from symseq.core.state import State
-from symseq.generators.presets import ag as presets
 from symseq.generators.ag import utils
-from symseq.generators.ag.generator import generate_random_grammar, grammar_with_complexity
+from symseq.generators.ag.generator import (
+    generate_random_grammar,
+    grammar_with_complexity,
+)
+from symseq.generators.presets import ag as presets
 from symseq.generators.registry import register
 from symseq.trial import Target, Trial
 from symseq.utils.io import get_logger, save_pickle
@@ -64,9 +68,7 @@ class ArtificialGrammar(SymbolicSequencer):
     227–244.
     """
 
-    intrinsic_target_granularities: ClassVar[dict[str, str]] = {
-        "grammaticality": "per_trial"
-    }
+    intrinsic_target_granularities: ClassVar[dict[str, str]] = {"grammaticality": "per_trial"}
 
     def __init__(
         self,
@@ -83,6 +85,7 @@ class ArtificialGrammar(SymbolicSequencer):
         build_graph: bool = True,
         metadata: dict | None = None,
         verbose: bool = True,
+        start_probabilities: Mapping[str, float] | None = None,
     ):
         """
 
@@ -117,8 +120,11 @@ class ArtificialGrammar(SymbolicSequencer):
              Whether to validate the grammar. Defaults to True.
          build_graph: bool
              Whether to build the graph. Defaults to True.
-         verbose: bool
-             Whether to print the grammar. Defaults to True.
+        verbose: bool
+            Whether to print the grammar. Defaults to True.
+        start_probabilities : mapping of str to float, optional
+            Sampling probabilities for ``start_states``. When omitted, start
+            states remain uniformly distributed.
 
         Raises
         ------
@@ -149,6 +155,8 @@ class ArtificialGrammar(SymbolicSequencer):
 
         # parse the provided states into proper format and State objects
         self.states, self.start_states, self.terminal_states = self._parse_states(states, start_states, terminal_states)
+        self._uniform_start_sampling = start_probabilities is None
+        self.start_probabilities = self._parse_start_probabilities(start_probabilities)
 
         # list (str, not States) and table of all transitions, including the EOS sink
         self.transitions, self.transition_table = self._parse_transitions(transitions)
@@ -182,6 +190,39 @@ class ArtificialGrammar(SymbolicSequencer):
 
         preset = presets.__dict__[preset_name]
         return cls(seed=seed, **preset)
+
+    @classmethod
+    def from_sequences(
+        cls,
+        sequences: Sequence[Sequence[str]],
+        *,
+        method: str = "markov",
+        **kwargs,
+    ) -> ArtificialGrammar:
+        """Infer a regular probabilistic grammar from symbolic sequences.
+
+        Parameters
+        ----------
+        sequences
+            Corpus of symbolic sequences. Recording boundaries are preserved.
+        method
+            ``"markov"`` for fixed-order/BIC estimation or ``"vlmc"`` for
+            classical Context-tree estimation.
+        **kwargs
+            Arguments forwarded to the selected inference backend.
+        """
+        if cls is not ArtificialGrammar:
+            raise TypeError("from_sequences currently supports ArtificialGrammar directly.")
+
+        if method == "markov":
+            from symseq.generators.ag.inference import infer_markov
+
+            return infer_markov(sequences, **kwargs)
+        if method in {"vlmc", "context"}:
+            from symseq.generators.ag.inference import infer_vlmc
+
+            return infer_vlmc(sequences, **kwargs)
+        raise ValueError("method must be 'markov', 'vlmc', or 'context'.")
 
     @classmethod
     def from_constraints(
@@ -343,12 +384,15 @@ class ArtificialGrammar(SymbolicSequencer):
 
         table = np.zeros((len(self.states), len(self.states)))
 
-        terminal_states_noeos = set()  # list of terminal states without transitions to EOS
+        # list of terminal states without transitions to EOS
+        terminal_states_noeos = set()
+
         # add transitions from terminal states to the EOS if not present, for now all with probability 1
         for state in self.terminal_states:
             trans_to_eos = [t for t in transitions if t[0] == state and t[1] == self.eos]
             if len(trans_to_eos) == 0:
-                transitions.append((state.tostring(), self.eos, 1.0))  # probability will be normalized later
+                # probability will be normalized later
+                transitions.append((state.tostring(), self.eos, 1.0))
                 terminal_states_noeos.add(state.tostring())
 
         # populate transition table from list
@@ -361,8 +405,10 @@ class ArtificialGrammar(SymbolicSequencer):
         # eos_idx = [i for i, s in enumerate(self.states) if s == self.eos]  # index of the EOS, we assume it's present
         # normalize the outgoing transitions of terminal states which did not previously have a transition to EOS
         for state in terminal_states_noeos:
-            state_idx = [i for i, s in enumerate(self.states) if s == state][0]  # index of the state
-            table[:, state_idx] /= table[:, state_idx].sum()  # normalize the outgoing transitions
+            # index of the state
+            state_idx = [i for i, s in enumerate(self.states) if s == state][0]
+            # normalize the outgoing transitions
+            table[:, state_idx] /= table[:, state_idx].sum()
             logger.info(
                 f"Added transition to EOS ({self.eos}) from terminal state {state}"
                 f" and normalized all outgoing probabilities."
@@ -435,6 +481,24 @@ class ArtificialGrammar(SymbolicSequencer):
 
         return states_list, start_states_list, terminal_states_list
 
+    def _parse_start_probabilities(
+        self,
+        probabilities: Mapping[str, float] | None,
+    ) -> dict[str, float]:
+        start_names = [state.tostring() for state in self.start_states]
+        if probabilities is None:
+            uniform_probability = 1.0 / len(start_names)
+            return {state: uniform_probability for state in start_names}
+
+        if set(probabilities) != set(start_names):
+            raise ValueError("start_probabilities must provide exactly one value for every start state.")
+        parsed = {state: float(probabilities[state]) for state in start_names}
+        if not all(np.isfinite(probability) and probability >= 0.0 for probability in parsed.values()):
+            raise ValueError("Start probabilities must be finite and non-negative.")
+        if not np.isclose(sum(parsed.values()), 1.0):
+            raise ValueError("Start probabilities must sum to 1.")
+        return parsed
+
     def print(self):
         """
         Displays all the relevant information.
@@ -475,13 +539,18 @@ class ArtificialGrammar(SymbolicSequencer):
         # add transitions from the terminal states to the initial states with probability 1/n_initial_states
         if correct_terminal_sink:
             for state in self.start_states:
-                state_idx = [i for i, s in enumerate(self.states) if s == state][0]  # index of the state
-                table[state_idx, eos_idx] = 1.0 / len(self.start_states)
+                state_idx = next(i for i, candidate in enumerate(self.states) if candidate == state)
+                table[state_idx, eos_idx] = self.start_probabilities[state.tostring()]
 
         states_as_str = [s.tostring() for s in self.states]
         if not full:
             # remove the EOS from the table (corresponding row and column)
-            table = table[np.ix_(np.arange(table.shape[0]) != eos_idx, np.arange(table.shape[1]) != eos_idx)]
+            table = table[
+                np.ix_(
+                    np.arange(table.shape[0]) != eos_idx,
+                    np.arange(table.shape[1]) != eos_idx,
+                )
+            ]
             logger.warning(
                 f"Removed transitions to EOS ({self.eos}) from terminal states. Outgoing probabilities"
                 f" from terminal states may not sum to 1 any more."
@@ -645,11 +714,16 @@ class ArtificialGrammar(SymbolicSequencer):
                 raise ValueError("Length range must be a tuple of two integers.")
             min_length, max_length = length_range
 
-        eos_idx = [i for i, s in enumerate(self.states) if s == self.eos][0]  # index of the EOS, we assume it's present
+        # index of the EOS, we assume it's present
+        eos_idx = [i for i, s in enumerate(self.states) if s == self.eos][0]
         start_state_idxs = [i for i, s in enumerate(self.states) if s in self.start_states]
+        start_probabilities = [self.start_probabilities[self.states[index].tostring()] for index in start_state_idxs]
         # attempt generating a string until a valid one is found
         while not valid and max_iter > 0:
-            start_state_idx = self.rng.choice(start_state_idxs)
+            if self._uniform_start_sampling:
+                start_state_idx = self.rng.choice(start_state_idxs)
+            else:
+                start_state_idx = self.rng.choice(start_state_idxs, p=start_probabilities)
             path = self._generate_path(start_state_idx, eos_idx, max_length=max_length + 1)  # + 1 for EOS
 
             if path:
@@ -662,8 +736,7 @@ class ArtificialGrammar(SymbolicSequencer):
 
         if max_iter == 0:
             raise RuntimeError(
-                f"Could not generate a grammatical string that "
-                f"satisfies the constraints after {tmp_max_tries} tries."
+                f"Could not generate a grammatical string that satisfies the constraints after {tmp_max_tries} tries."
             )
 
         # convert to symbols if necessary by removing indices
@@ -931,9 +1004,7 @@ class ArtificialGrammar(SymbolicSequencer):
         symbols = string_as_symbols(states)
 
         intrinsic_targets = {
-            "grammaticality": Target(
-                values=is_gram, mask=None, granularity="per_trial"
-            ),
+            "grammaticality": Target(values=is_gram, mask=None, granularity="per_trial"),
         }
         meta = {
             "paradigm": "ArtificialGrammar",

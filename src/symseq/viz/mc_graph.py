@@ -323,7 +323,6 @@ class MarkovChain:
 
 
 class Node:
-
     def __init__(
         self,
         center,

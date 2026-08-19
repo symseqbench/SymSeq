@@ -135,10 +135,7 @@ class SymbolicSequencer(ABC):
 
     def generate_trial(self, **params) -> Trial:
         """Generate one Trial. Subclasses must override."""
-        raise NotImplementedError(
-            f"{type(self).__name__} has not implemented the Trial-based "
-            f"generate_trial API yet."
-        )
+        raise NotImplementedError(f"{type(self).__name__} has not implemented the Trial-based generate_trial API yet.")
 
     def generate_trials(self, n: int, **params) -> list[Trial]:
         """Generate n independent Trials."""

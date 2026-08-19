@@ -153,8 +153,7 @@ def test_preset_round_trips(name):
 
 def test_preset_shapes():
     assert all(
-        re.fullmatch(r"a+b+", "".join(CFGGenerator.from_preset("anbn", seed=i).generate_string()))
-        for i in range(10)
+        re.fullmatch(r"a+b+", "".join(CFGGenerator.from_preset("anbn", seed=i).generate_string())) for i in range(10)
     )
     # even palindrome: string equals its own reverse
     pal = CFGGenerator.from_preset("palindrome", seed=1)

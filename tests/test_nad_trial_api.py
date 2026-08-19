@@ -17,6 +17,7 @@ def _nad(seed=42):
 class TestTrialAPI:
     def test_generate_trial_returns_trial(self):
         from symseq.trial import Trial, Target
+
         gen = _nad()
         trial = gen.generate_trial(filler_len=2)
         assert isinstance(trial, Trial)
@@ -52,6 +53,7 @@ class TestTrialAPI:
 
     def test_generate_trials_batch(self):
         from symseq.trial import Trial
+
         gen = _nad()
         trials = gen.generate_trials(n=4, filler_len=2)
         assert len(trials) == 4
@@ -61,6 +63,7 @@ class TestTrialAPI:
     def test_draw_trial_and_draw_batch_protocol(self):
         from symseq.trial import Trial
         from symseq.trial_source import TrialSource
+
         gen = _nad()
         assert isinstance(gen, TrialSource)
         t = gen.draw_trial()
@@ -79,6 +82,7 @@ class TestTrialAPI:
     def test_registry_builds_nad(self):
         from symseq.generators.registry import build, registered_names
         from symseq.trial import Trial
+
         assert "NonAdjacentDependencies" in registered_names()
         gen = build("NonAdjacentDependencies", n_deps=3, seed=42, verbose=False)
         assert isinstance(gen, NonAdjacentDependencies)

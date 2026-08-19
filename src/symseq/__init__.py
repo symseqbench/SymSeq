@@ -16,8 +16,8 @@ if TYPE_CHECKING:
     from .tasks.base import Task
 
 __author__ = """Barna Zajzon"""
-__email__ = 'barna.zajzon@gmail.com'
-__version__ = '0.1.0'
+__email__ = "barna.zajzon@gmail.com"
+__version__ = "0.1.0"
 
 __all__ = [
     "Target",

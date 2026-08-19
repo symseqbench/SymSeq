@@ -53,13 +53,9 @@ def _register_intrinsic_task(
     return register(type_name)(task_type)
 
 
-Grammaticality = _register_intrinsic_task(
-    "Grammaticality", "grammaticality", "per_trial"
-)
+Grammaticality = _register_intrinsic_task("Grammaticality", "grammaticality", "per_trial")
 PairIndex = _register_intrinsic_task("PairIndex", "pair_index", "per_trial")
 NBackMatch = _register_intrinsic_task("NBackMatch", "nback_match", "per_token")
 NBackRole = _register_intrinsic_task("NBackRole", "nback_role", "per_token")
 NAXLabel = _register_intrinsic_task("NAXLabel", "nax_label", "per_trial")
-NAXIsTarget = _register_intrinsic_task(
-    "NAXIsTarget", "nax_is_target", "per_trial"
-)
+NAXIsTarget = _register_intrinsic_task("NAXIsTarget", "nax_is_target", "per_trial")

@@ -20,10 +20,7 @@ def register(type_name: str):
 
     def _decorator(cls: type[Task]) -> type[Task]:
         if type_name in _REGISTRY:
-            raise ValueError(
-                f"Task {type_name!r} is already registered to "
-                f"{_REGISTRY[type_name].__name__}."
-            )
+            raise ValueError(f"Task {type_name!r} is already registered to {_REGISTRY[type_name].__name__}.")
         _REGISTRY[type_name] = cls
         return cls
 
@@ -33,9 +30,7 @@ def register(type_name: str):
 def build(type_name: str, **params) -> Task:
     """Instantiate a registered Task by type."""
     if type_name not in _REGISTRY:
-        raise KeyError(
-            f"Unknown task type {type_name!r}. Registered: {sorted(_REGISTRY)}"
-        )
+        raise KeyError(f"Unknown task type {type_name!r}. Registered: {sorted(_REGISTRY)}")
     return _REGISTRY[type_name](**params)
 
 

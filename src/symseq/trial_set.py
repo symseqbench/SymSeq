@@ -46,10 +46,7 @@ class TrialSet:
         for name, idxs in self.splits.items():
             for i in idxs:
                 if not (0 <= i < n):
-                    raise IndexError(
-                        f"split {name!r} contains out-of-range index {i} "
-                        f"(TrialSet has {n} trials)"
-                    )
+                    raise IndexError(f"split {name!r} contains out-of-range index {i} (TrialSet has {n} trials)")
         # Default the draw source to "train" if present.
         if "train" in self.splits:
             self._draw_split = "train"

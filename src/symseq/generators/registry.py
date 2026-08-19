@@ -20,20 +20,20 @@ _REGISTRY: dict[str, Type[SymbolicSequencer]] = {}
 
 def register(name: str):
     """Class decorator that registers a generator under `name`."""
+
     def _decorator(cls: Type[SymbolicSequencer]) -> Type[SymbolicSequencer]:
         if name in _REGISTRY:
             raise ValueError(f"Generator {name!r} is already registered to {_REGISTRY[name].__name__}.")
         _REGISTRY[name] = cls
         return cls
+
     return _decorator
 
 
 def build(name: str, **params) -> SymbolicSequencer:
     """Instantiate a registered generator by name."""
     if name not in _REGISTRY:
-        raise KeyError(
-            f"Unknown generator {name!r}. Registered: {sorted(_REGISTRY)}"
-        )
+        raise KeyError(f"Unknown generator {name!r}. Registered: {sorted(_REGISTRY)}")
     return _REGISTRY[name](**params)
 
 

@@ -129,9 +129,7 @@ class TestLoadFromDict:
         assert all(set(trial.targets) == {"match", "next_token"} for trial in ts.trials)
 
     def test_configured_tasks_replace_implicit_targets(self):
-        cfg = _nback_cfg(
-            tasks=[{"id": "next_token", "type": "NStepPrediction", "params": {"n": 1}}]
-        )
+        cfg = _nback_cfg(tasks=[{"id": "next_token", "type": "NStepPrediction", "params": {"n": 1}}])
         ts = load_trial_set(cfg)
         assert all(set(trial.targets) == {"next_token"} for trial in ts.trials)
 
@@ -209,9 +207,7 @@ class TestLoadFromDictArtificialGrammarPreset:
 
     def test_only_configured_ag_targets_are_published(self):
         cfg = _ag_preset_cfg()
-        cfg["symseq"]["tasks"] = [
-            {"id": "next_token", "type": "NStepPrediction", "params": {"n": 1}}
-        ]
+        cfg["symseq"]["tasks"] = [{"id": "next_token", "type": "NStepPrediction", "params": {"n": 1}}]
         ts = load_trial_set(cfg)
 
         for trial in ts.trials:
@@ -308,9 +304,7 @@ class TestValidation:
 
     def test_missing_generator_type(self):
         with pytest.raises(ValueError, match="missing 'type'"):
-            load_trial_set(
-                {"symseq": {"generator": {}, "trial_set": {"n_trials": 1}}}
-            )
+            load_trial_set({"symseq": {"generator": {}, "trial_set": {"n_trials": 1}}})
 
     def test_missing_trial_set(self):
         with pytest.raises(ValueError, match="missing 'trial_set'"):
@@ -318,9 +312,7 @@ class TestValidation:
 
     def test_missing_n_trials(self):
         with pytest.raises(ValueError, match="missing 'n_trials'"):
-            load_trial_set(
-                {"symseq": {"generator": {"type": "NBack"}, "trial_set": {}}}
-            )
+            load_trial_set({"symseq": {"generator": {"type": "NBack"}, "trial_set": {}}})
 
     def test_unknown_generator_type(self):
         cfg = _nback_cfg()

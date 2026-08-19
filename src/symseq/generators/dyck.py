@@ -103,9 +103,7 @@ class DyckGenerator(SymbolicSequencer):
     ['(', '[', ']', ')']
     """
 
-    intrinsic_target_granularities: ClassVar[dict[str, str]] = {
-        "grammaticality": "per_trial"
-    }
+    intrinsic_target_granularities: ClassVar[dict[str, str]] = {"grammaticality": "per_trial"}
 
     def __init__(
         self,
@@ -438,9 +436,7 @@ class DyckGenerator(SymbolicSequencer):
             is_gram = False
 
         intrinsic_targets = {
-            "grammaticality": Target(
-                values=is_gram, mask=None, granularity="per_trial"
-            ),
+            "grammaticality": Target(values=is_gram, mask=None, granularity="per_trial"),
         }
         meta = {
             "paradigm": "Dyck",

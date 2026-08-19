@@ -97,12 +97,12 @@ def _compute_compression_single(seq):
         return None, None
 
 
-def compute_compression_metrics_ensemble(sequences: list[list[str]],
-                                         min_sequence_length: int = 10,
-                                         n_jobs: int = 1) -> dict:
+def compute_compression_metrics_ensemble(
+    sequences: list[list[str]], min_sequence_length: int = 10, n_jobs: int = 1
+) -> dict:
     """
     Compute compression-based metrics on an ensemble of sequences.
-    
+
     Parameters
     ----------
     sequences : list of list of str
@@ -112,7 +112,7 @@ def compute_compression_metrics_ensemble(sequences: list[list[str]],
     n_jobs : int, default=1
         Number of parallel jobs. -1 means using all processors.
         Set to 1 for sequential processing (default for backward compatibility).
-    
+
     Returns
     -------
     dict with keys:
@@ -124,16 +124,12 @@ def compute_compression_metrics_ensemble(sequences: list[list[str]],
     valid_sequences = [seq for seq in sequences if len(seq) >= min_sequence_length]
 
     if not valid_sequences:
-        return {
-            'compressibility': [],
-            'lzw_complexity': [],
-            'n_sequences_analyzed': 0
-        }
+        return {"compressibility": [], "lzw_complexity": [], "n_sequences_analyzed": 0}
 
     # Compute metrics for each sequence
     if n_jobs != 1:
         # Parallel computation
-        results = Parallel(n_jobs=n_jobs, backend='loky')(
+        results = Parallel(n_jobs=n_jobs, backend="loky")(
             delayed(_compute_compression_single)(seq) for seq in valid_sequences
         )
         compressibilities = [r[0] for r in results if r[0] is not None]
@@ -157,7 +153,7 @@ def compute_compression_metrics_ensemble(sequences: list[list[str]],
                 pass
 
     return {
-        'compressibility': compressibilities,
-        'lzw_complexity': lzw_complexities,
-        'n_sequences_analyzed': len(valid_sequences)
+        "compressibility": compressibilities,
+        "lzw_complexity": lzw_complexities,
+        "n_sequences_analyzed": len(valid_sequences),
     }

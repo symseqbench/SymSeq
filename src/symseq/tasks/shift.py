@@ -64,6 +64,6 @@ class NStepPrediction(Task):
         L = len(symbols)
         if self.n >= L:
             return Target(values=[None] * L, mask=[False] * L, granularity="per_token")
-        values = list(symbols[self.n:]) + [None] * self.n
+        values = list(symbols[self.n :]) + [None] * self.n
         mask = [True] * (L - self.n) + [False] * self.n
         return Target(values=values, mask=mask, granularity="per_token")

@@ -117,6 +117,7 @@ def _load_config(source: str | Path | dict) -> dict:
         suffix = path.suffix.lower()
         if suffix in (".yaml", ".yml"):
             import yaml
+
             with open(path) as f:
                 cfg = yaml.safe_load(f)
         else:
@@ -264,8 +265,7 @@ def resolve_trial_params(symseq_cfg: Any) -> dict[str, Any]:
         if "filler_len" not in params and min_len == max_len:
             if max_len < 2:
                 raise ValueError(
-                    "NonAdjacentDependencies fixed trial length must be >= 2 "
-                    f"to infer filler_len, got {max_len}"
+                    f"NonAdjacentDependencies fixed trial length must be >= 2 to infer filler_len, got {max_len}"
                 )
             params["filler_len"] = max_len - 2
     return params
@@ -279,9 +279,7 @@ def _cfg_get(obj: Any, key: str, default: Any = None) -> Any:
     return getattr(obj, key, default)
 
 
-def _resolve_splits(
-    n_total: int, splits_cfg: dict[str, int | float]
-) -> dict[str, list[int]]:
+def _resolve_splits(n_total: int, splits_cfg: dict[str, int | float]) -> dict[str, list[int]]:
     """Turn ``{"train": 1000, "test": 200}`` or fractional variants into index lists.
 
     Splits are allocated in declaration order, consuming the trial list from the
@@ -296,14 +294,10 @@ def _resolve_splits(
         elif isinstance(value, int) and value >= 0:
             size = value
         else:
-            raise ValueError(
-                f"split {name!r}: value must be int>=0 or float in (0,1], got {value!r}"
-            )
+            raise ValueError(f"split {name!r}: value must be int>=0 or float in (0,1], got {value!r}")
         end = cursor + size
         if end > n_total:
-            raise ValueError(
-                f"splits exceed n_trials={n_total}: {name!r} would extend to index {end}"
-            )
+            raise ValueError(f"splits exceed n_trials={n_total}: {name!r} would extend to index {end}")
         out[name] = list(range(cursor, end))
         cursor = end
     return out

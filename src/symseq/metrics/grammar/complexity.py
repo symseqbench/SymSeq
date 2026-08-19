@@ -37,11 +37,11 @@ def grammar_rule_complexity(grammar: dict) -> dict:
     """
     if not grammar:
         return {
-            'num_rules': 0,
-            'num_nonterminals': 0,
-            'num_terminals': 0,
-            'avg_rule_length': 0.0,
-            'branching_factor': 0.0,
+            "num_rules": 0,
+            "num_nonterminals": 0,
+            "num_terminals": 0,
+            "avg_rule_length": 0.0,
+            "branching_factor": 0.0,
         }
 
     num_nonterminals = len(grammar)
@@ -62,11 +62,11 @@ def grammar_rule_complexity(grammar: dict) -> dict:
     branching_factor = num_rules / num_nonterminals if num_nonterminals > 0 else 0.0
 
     return {
-        'num_rules': num_rules,
-        'num_nonterminals': num_nonterminals,
-        'num_terminals': num_terminals,
-        'avg_rule_length': avg_rule_length,
-        'branching_factor': branching_factor,
+        "num_rules": num_rules,
+        "num_nonterminals": num_nonterminals,
+        "num_terminals": num_terminals,
+        "avg_rule_length": avg_rule_length,
+        "branching_factor": branching_factor,
     }
 
 
@@ -94,10 +94,7 @@ def grammar_state_complexity(grammar: dict) -> int:
     For regular grammars, this is the minimal DFA size.
     For context-free grammars, this is the minimal PDA size.
     """
-    warnings.warn(
-        "State complexity estimation is not fully implemented.",
-        UserWarning
-    )
+    warnings.warn("State complexity estimation is not fully implemented.", UserWarning)
 
     return len(grammar)
 
@@ -128,10 +125,5 @@ def derivation_tree_complexity(grammar: dict, n_samples: int = 100) -> dict:
     - Tree structure analysis
     - Statistical aggregation
     """
-    warnings.warn(
-        "Derivation tree complexity is not fully implemented.",
-        UserWarning
-    )
-    raise NotImplementedError(
-        "Derivation tree analysis requires grammar derivation sampling."
-    )
+    warnings.warn("Derivation tree complexity is not fully implemented.", UserWarning)
+    raise NotImplementedError("Derivation tree analysis requires grammar derivation sampling.")

@@ -264,9 +264,9 @@ def chunk_transitions(
 
     """
     all_ngrams, unique_ngrams = chunk_ngrams_string(sequence, chunk_len)
-    assert (
-        len(np.unique([len(x) for x in unique_ngrams])) == 1
-    ), f"All unique n-grams must have the same length n={chunk_len}!"
+    assert len(np.unique([len(x) for x in unique_ngrams])) == 1, (
+        f"All unique n-grams must have the same length n={chunk_len}!"
+    )
     assert len(np.unique([len(x) for x in all_ngrams])) == 1, f"All n-grams must have the same length n={chunk_len}!"
 
     unique_ngrams = np.array(unique_ngrams)

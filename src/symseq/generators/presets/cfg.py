@@ -38,9 +38,7 @@ anbn = {
 # "mirror" supra-regular grammar from AGL studies (Fitch & Hauser; de Vries).
 palindrome = {
     "label": "palindrome",
-    "grammar": (
-        "S -> 'a' S 'a' [0.25] | 'b' S 'b' [0.25] | 'a' 'a' [0.25] | 'b' 'b' [0.25]"
-    ),
+    "grammar": ("S -> 'a' S 'a' [0.25] | 'b' S 'b' [0.25] | 'a' 'a' [0.25] | 'b' 'b' [0.25]"),
     "max_length": 60,
 }
 
@@ -48,9 +46,7 @@ palindrome = {
 # e.g. a b B A. The context-free half of the nested-vs-cross-serial AGL contrast.
 nested_dependencies = {
     "label": "nested_dependencies",
-    "grammar": (
-        "S -> 'a' S 'A' [0.25] | 'b' S 'B' [0.25] | 'a' 'A' [0.25] | 'b' 'B' [0.25]"
-    ),
+    "grammar": ("S -> 'a' S 'A' [0.25] | 'b' S 'B' [0.25] | 'a' 'A' [0.25] | 'b' 'B' [0.25]"),
     "max_length": 60,
 }
 
@@ -58,24 +54,22 @@ nested_dependencies = {
 # so the top-down sampler always consumes before recursing.
 dyck1 = {
     "label": "dyck1",
-    "grammar": (
-        "S -> '(' S ')' S [0.2] | '(' ')' S [0.2] | '(' S ')' [0.2] | '(' ')' [0.4]"
-    ),
+    "grammar": ("S -> '(' S ')' S [0.2] | '(' ')' S [0.2] | '(' S ')' [0.2] | '(' ')' [0.4]"),
     "max_length": 60,
 }
 
 # Dyck-2: balanced strings over two bracket types, () and [].
 dyck2 = {
     "label": "dyck2",
-    "grammar": ( 
+    "grammar": (
         "S -> '(' S ')' S [0.1] "
-            "| '[' S ']' S [0.1] "
-            "| '(' ')' S [0.1] "
-            "| '[' ']' S [0.1] "
-            "| '(' S ')' [0.1] "
-            "| '[' S ']' [0.1] "
-            "| '(' ')' [0.2] "
-            "| '[' ']' [0.2]"
+        "| '[' S ']' S [0.1] "
+        "| '(' ')' S [0.1] "
+        "| '[' ']' S [0.1] "
+        "| '(' S ')' [0.1] "
+        "| '[' S ']' [0.1] "
+        "| '(' ')' [0.2] "
+        "| '[' ']' [0.2]"
     ),
     "max_length": 60,
 }
@@ -84,11 +78,7 @@ dyck2 = {
 # (precedence-encoding) form; verified subcritical so length stays finite.
 arith = {
     "label": "arith",
-    "grammar": (
-        "E -> T '+' E [0.2] | T [0.8]\n"
-        "T -> F '*' T [0.2] | F [0.8]\n"
-        "F -> '(' E ')' [0.1] | 'id' [0.9]"
-    ),
+    "grammar": ("E -> T '+' E [0.2] | T [0.8]\nT -> F '*' T [0.2] | F [0.8]\nF -> '(' E ')' [0.1] | 'id' [0.9]"),
     "max_length": 60,
 }
 

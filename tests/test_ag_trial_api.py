@@ -19,6 +19,7 @@ def _ag():
 class TestTrialAPI:
     def test_generate_trial_returns_trial(self):
         from symseq.trial import Trial, Target
+
         gen = _ag()
         trial = gen.generate_trial(length_range=(3, 30))
         assert isinstance(trial, Trial)
@@ -28,6 +29,7 @@ class TestTrialAPI:
 
     def test_symbols_and_states_are_consistent(self):
         from symseq.utils.strtools import string_as_symbols
+
         gen = _ag()
         trial = gen.generate_trial(length_range=(3, 30))
         # symbols is the state-list with indices stripped
@@ -58,6 +60,7 @@ class TestTrialAPI:
 
     def test_generate_trials_batch(self):
         from symseq.trial import Trial
+
         gen = _ag()
         trials = gen.generate_trials(n=4, length_range=(3, 30))
         assert len(trials) == 4
@@ -66,6 +69,7 @@ class TestTrialAPI:
     def test_draw_trial_and_draw_batch_protocol(self):
         from symseq.trial import Trial
         from symseq.trial_source import TrialSource
+
         gen = _ag()
         assert isinstance(gen, TrialSource)
         t = gen.draw_trial()
@@ -76,6 +80,7 @@ class TestTrialAPI:
     def test_iter_trials_yields_trials(self):
         from itertools import islice
         from symseq.trial import Trial
+
         gen = _ag()
         first_five = list(islice(gen.iter_trials(length_range=(3, 30)), 5))
         assert len(first_five) == 5
@@ -91,4 +96,5 @@ class TestTrialAPI:
 
     def test_registry_builds_artificial_grammar(self):
         from symseq.generators.registry import build, registered_names
+
         assert "ArtificialGrammar" in registered_names()

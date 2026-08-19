@@ -68,7 +68,7 @@ def linguistic_complexity(sequence: list[str], max_w: int | None = None) -> floa
             break
 
         vocab_size = len(unique_ngrams)
-        max_possible = min(alphabet_size ** i, seq_len - i + 1)
+        max_possible = min(alphabet_size**i, seq_len - i + 1)
 
         if max_possible == 0:
             break

@@ -13,11 +13,7 @@ from tqdm import tqdm
 from symseq.metrics.string import entropy
 
 
-def mutual_information_strings(
-    seq1: list[str],
-    seq2: list[str],
-    method: str = 'joint'
-) -> float:
+def mutual_information_strings(seq1: list[str], seq2: list[str], method: str = "joint") -> float:
     """
     Compute mutual information between two strings.
 
@@ -44,11 +40,11 @@ def mutual_information_strings(
     >>> seq2 = ['A', 'B', 'A']
     >>> MI = mutual_information_strings(seq1, seq2)
     """
-    if method == 'joint':
+    if method == "joint":
         H_x = entropy(seq1)
         H_y = entropy(seq2)
         H_xy = entropy(seq1 + seq2)
-    elif method == 'aligned':
+    elif method == "aligned":
         if len(seq1) != len(seq2):
             raise ValueError("Aligned method requires equal-length sequences")
         H_x = entropy(seq1)
@@ -62,11 +58,7 @@ def mutual_information_strings(
     return max(0.0, MI)
 
 
-def normalized_mutual_information(
-    seq1: list[str],
-    seq2: list[str],
-    method: str = 'joint'
-) -> float:
+def normalized_mutual_information(seq1: list[str], seq2: list[str], method: str = "joint") -> float:
     """
     Normalized mutual information NMI in [0, 1].
 
@@ -112,10 +104,7 @@ def _compute_mi_pair(i, j, string_set, mi_func, method, kwargs):
 
 
 def pairwise_mutual_information(
-    string_set: list[list[str]],
-    metric: str = 'mi',
-    method: str = 'joint',
-    **kwargs
+    string_set: list[list[str]], metric: str = "mi", method: str = "joint", **kwargs
 ) -> np.ndarray:
     """
     Compute pairwise mutual information matrix for string set.
@@ -151,9 +140,9 @@ def pairwise_mutual_information(
     T = len(string_set)
     MI_matrix = np.zeros((T, T))
 
-    if metric == 'mi':
+    if metric == "mi":
         mi_func = mutual_information_strings
-    elif metric == 'nmi':
+    elif metric == "nmi":
         mi_func = normalized_mutual_information
     else:
         raise ValueError(f"Unknown metric: {metric}. Use 'mi' or 'nmi'.")
@@ -178,11 +167,7 @@ def pairwise_mutual_information(
 
 
 def pairwise_mutual_information_parallel(
-    string_set: list[list[str]],
-    metric: str = 'mi',
-    method: str = 'joint',
-    n_jobs: int = -1,
-    **kwargs
+    string_set: list[list[str]], metric: str = "mi", method: str = "joint", n_jobs: int = -1, **kwargs
 ) -> np.ndarray:
     """
     Compute pairwise mutual information matrix for string set using parallel processing.
@@ -221,9 +206,9 @@ def pairwise_mutual_information_parallel(
     T = len(string_set)
     MI_matrix = np.zeros((T, T))
 
-    if metric == 'mi':
+    if metric == "mi":
         mi_func = mutual_information_strings
-    elif metric == 'nmi':
+    elif metric == "nmi":
         mi_func = normalized_mutual_information
     else:
         raise ValueError(f"Unknown metric: {metric}. Use 'mi' or 'nmi'.")
@@ -232,7 +217,7 @@ def pairwise_mutual_information_parallel(
     pairs = [(i, j) for i in range(T) for j in range(i, T)]
 
     # Parallel computation
-    results = Parallel(n_jobs=n_jobs, backend='loky')(
+    results = Parallel(n_jobs=n_jobs, backend="loky")(
         delayed(_compute_mi_pair)(i, j, string_set, mi_func, method, kwargs)
         for i, j in tqdm(pairs, desc=f"Computing {metric.upper()} (parallel)")
     )
@@ -245,10 +230,7 @@ def pairwise_mutual_information_parallel(
     return MI_matrix
 
 
-def string_set_entropy(
-    string_set: list[list[str]],
-    use_frequencies: bool = False
-) -> float:
+def string_set_entropy(string_set: list[list[str]], use_frequencies: bool = False) -> float:
     """
     Compute entropy of string-set distribution.
 
@@ -275,10 +257,7 @@ def string_set_entropy(
     >>> H = string_set_entropy(strings, use_frequencies=True)
     """
     if len(string_set) < 20:
-        warnings.warn(
-            "String set too small (T < 20) for reliable entropy estimation",
-            UserWarning
-        )
+        warnings.warn("String set too small (T < 20) for reliable entropy estimation", UserWarning)
 
     if use_frequencies:
         string_tuples = [tuple(s) for s in string_set]

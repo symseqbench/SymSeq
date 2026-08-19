@@ -84,7 +84,13 @@ class TestDrawAndProtocol:
         drawn = [ts.draw_trial() for _ in range(7)]
         # cycles deterministically through indices 0,1,2,0,1,2,0
         assert [t.symbols[0] for t in drawn] == [
-            "t0_a", "t1_a", "t2_a", "t0_a", "t1_a", "t2_a", "t0_a",
+            "t0_a",
+            "t1_a",
+            "t2_a",
+            "t0_a",
+            "t1_a",
+            "t2_a",
+            "t0_a",
         ]
 
     def test_draw_batch(self):

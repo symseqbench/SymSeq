@@ -35,6 +35,7 @@ try:
     from nltk import CFG, PCFG, Nonterminal
     from nltk.grammar import ProbabilisticProduction
     from nltk.parse import ChartParser
+
     NLTK_AVAILABLE = True
 except ImportError:
     NLTK_AVAILABLE = False
@@ -92,9 +93,7 @@ class CFGGenerator(SymbolicSequencer):
     False
     """
 
-    intrinsic_target_granularities: ClassVar[dict[str, str]] = {
-        "grammaticality": "per_trial"
-    }
+    intrinsic_target_granularities: ClassVar[dict[str, str]] = {"grammaticality": "per_trial"}
 
     def __init__(
         self,
@@ -108,9 +107,7 @@ class CFGGenerator(SymbolicSequencer):
         seed: int | None = None,
     ):
         if not NLTK_AVAILABLE:
-            raise ImportError(
-                "NLTK is required for the CFG generator. Install with: pip install nltk"
-            )
+            raise ImportError("NLTK is required for the CFG generator. Install with: pip install nltk")
 
         self.max_length = max_length
         self.max_depth = max_depth
@@ -157,10 +154,7 @@ class CFGGenerator(SymbolicSequencer):
         from symseq.generators.presets import cfg as cfg_presets
 
         if preset_name not in cfg_presets.PRESETS:
-            raise ValueError(
-                f"CFG preset {preset_name!r} not found. "
-                f"Available: {cfg_presets.list_presets()}"
-            )
+            raise ValueError(f"CFG preset {preset_name!r} not found. Available: {cfg_presets.list_presets()}")
         preset = dict(cfg_presets.__dict__[preset_name])
         preset.update(overrides)
         return cls(seed=seed, **preset)
@@ -185,9 +179,7 @@ class CFGGenerator(SymbolicSequencer):
                 cfg = CFG.fromstring(text)
                 return CFGGenerator._cfg_to_pcfg(cfg)
 
-        raise TypeError(
-            f"`grammar` must be a str, Path, nltk.CFG, or nltk.PCFG; got {type(grammar).__name__}"
-        )
+        raise TypeError(f"`grammar` must be a str, Path, nltk.CFG, or nltk.PCFG; got {type(grammar).__name__}")
 
     @staticmethod
     def _maybe_read_file(grammar: str) -> str:
@@ -452,9 +444,7 @@ class CFGGenerator(SymbolicSequencer):
             is_gram = False
 
         intrinsic_targets = {
-            "grammaticality": Target(
-                values=is_gram, mask=None, granularity="per_trial"
-            ),
+            "grammaticality": Target(values=is_gram, mask=None, granularity="per_trial"),
         }
         meta = {
             "paradigm": "CFG",

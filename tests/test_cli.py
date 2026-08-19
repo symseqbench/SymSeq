@@ -104,10 +104,7 @@ def test_generate_writes_symbolic_dataset(tmp_path):
     assert (output_dir / "splits" / "train.jsonl").exists()
     assert (output_dir / "splits" / "test.jsonl").exists()
 
-    trial_rows = [
-        json.loads(line)
-        for line in (output_dir / "trials.jsonl").read_text().splitlines()
-    ]
+    trial_rows = [json.loads(line) for line in (output_dir / "trials.jsonl").read_text().splitlines()]
     train_rows = (output_dir / "splits" / "train.jsonl").read_text().splitlines()
     test_rows = (output_dir / "splits" / "test.jsonl").read_text().splitlines()
 

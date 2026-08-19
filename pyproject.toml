@@ -8,12 +8,12 @@ version = "0.1.0"
 description = "Python library for defining, generating, and analyzing symbolic sequences"
 readme = "README.md"
 authors = [
-  {name = "Renato Duarte", email = "rcfduarte@gmail.com"},
-  {name = "Barna Zajzon", email = "barna.zajzon@gmail.com"},
+    { name = "Renato Duarte", email = "rcfduarte@gmail.com" },
+    { name = "Barna Zajzon", email = "barna.zajzon@gmail.com" },
 ]
 maintainers = [
-  {name = "Renato Duarte", email = "rcfduarte@gmail.com"},
-  {name = "Barna Zajzon", email = "barna.zajzon@gmail.com"},
+    { name = "Renato Duarte", email = "rcfduarte@gmail.com" },
+    { name = "Barna Zajzon", email = "barna.zajzon@gmail.com" },
 ]
 classifiers = [
     "Development Status :: 3 - Alpha",
@@ -27,41 +27,33 @@ classifiers = [
     "Topic :: Scientific/Engineering",
     "Topic :: Software Development :: Libraries :: Python Modules",
 ]
-license = {text = "MIT license"}
+license = { text = "MIT license" }
 requires-python = ">=3.10"
 dependencies = [
-  "numpy",
-  "networkx",
-  "nltk",
-  "joblib",
-  "scipy",
-  "tqdm",
-  "PyYAML",
-  "typer",
+    "numpy",
+    "networkx",
+    "nltk",
+    "joblib",
+    "scipy",
+    "tqdm",
+    "PyYAML",
+    "typer",
 ]
 
 [project.scripts]
 symseq = "symseq.cli:main"
 
 [project.optional-dependencies]
-analysis = [
-    "pandas",
-]
-fast-metrics = [
-    "antropy>=0.1.9",
-]
-notebooks = [
-    "ipython>=8.37.0",
-    "ipykernel>=6.29.5",
-]
-viz = [
-    "matplotlib",
-]
+analysis = ["pandas"]
+fast-metrics = ["antropy>=0.1.9"]
+sax = ["saxpy>=2.0.1"]
+notebooks = ["ipython>=8.37.0", "ipykernel>=6.29.5"]
+viz = ["matplotlib"]
 dev = [
-    "coverage",  # testing
-    "mypy",  # linting
-    "pytest",  # testing
-    "ruff"  # linting
+    "coverage", # testing
+    "mypy",     # linting
+    "pytest",   # testing
+    "ruff",     # linting
 ]
 
 [project.urls]
@@ -71,12 +63,10 @@ changelog = "https://github.com:symseqbench/symseq/blob/master/changelog.md"
 homepage = "https://github.com:symseqbench/symseq"
 
 [tool.setuptools]
-package-dir = {"" = "src"}
+package-dir = { "" = "src" }
 
 [tool.setuptools.package-data]
 "*" = ["*.*"]
-
-
 
 
 # Mypy
@@ -98,13 +88,13 @@ disable_error_code = "attr-defined"
 
 
 [tool.ruff]
-line-length = 100
+line-length = 120
 target-version = "py311"
 extend-exclude = ["docs", "notebooks", "_archive", "deprecated"]
 
 [tool.ruff.lint]
 select = ["E", "W", "F", "I", "B", "UP", "SIM", "RUF"]
-ignore = ["E501", "B008", "RUF001", "RUF002", "RUF003"]
+ignore = ["B008", "RUF001", "RUF002", "RUF003"]
 
 [tool.ruff.format]
 quote-style = "double"

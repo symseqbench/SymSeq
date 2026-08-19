@@ -701,6 +701,7 @@ class TestTrialAPI:
 
     def test_generate_trial_returns_trial(self):
         from symseq.trial import Trial, Target
+
         gen = nAX(seed=42)
         trial = gen.generate_trial()
         assert isinstance(trial, Trial)
@@ -733,6 +734,7 @@ class TestTrialAPI:
 
     def test_generate_trials_batch(self):
         from symseq.trial import Trial
+
         gen = nAX(seed=42)
         trials = gen.generate_trials(n=4)
         assert len(trials) == 4
@@ -741,6 +743,7 @@ class TestTrialAPI:
     def test_draw_trial_and_draw_batch_protocol(self):
         from symseq.trial import Trial
         from symseq.trial_source import TrialSource
+
         gen = nAX(seed=42)
         assert isinstance(gen, TrialSource)
         t = gen.draw_trial()
@@ -759,6 +762,7 @@ class TestTrialAPI:
     def test_registry_builds_nax(self):
         from symseq.generators.registry import build, registered_names
         from symseq.trial import Trial
+
         assert "nAX" in registered_names()
         gen = build("nAX", seed=42)
         assert isinstance(gen, nAX)

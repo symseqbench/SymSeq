@@ -77,24 +77,18 @@ class TestRegistry:
 
 class TestConfiguredTasks:
     def test_builds_mapping_keyed_by_configured_id(self):
-        tasks = build_tasks(
-            [{"id": "prediction", "type": "NStepPrediction", "params": {"n": 2}}]
-        )
+        tasks = build_tasks([{"id": "prediction", "type": "NStepPrediction", "params": {"n": 2}}])
         assert list(tasks) == ["prediction"]
         assert isinstance(tasks["prediction"], NStepPrediction)
         assert tasks["prediction"].n == 2
 
     def test_accepts_typed_config_entries(self):
-        tasks = build_tasks(
-            [SimpleNamespace(id="memory", type="NStepMemory", params={"n": 1})]
-        )
+        tasks = build_tasks([SimpleNamespace(id="memory", type="NStepMemory", params={"n": 1})])
         assert isinstance(tasks["memory"], NStepMemory)
 
     def test_coercion_returns_fresh_normalized_entries(self):
         params = {"n": 1}
-        entries = coerce_task_entries(
-            [SimpleNamespace(id="memory", type="NStepMemory", params=params)]
-        )
+        entries = coerce_task_entries([SimpleNamespace(id="memory", type="NStepMemory", params=params)])
         assert entries == [("memory", "NStepMemory", {"n": 1})]
         assert entries[0][2] is not params
 
@@ -109,9 +103,7 @@ class TestConfiguredTasks:
     @pytest.mark.parametrize("params", [[1], []])
     def test_requires_mapping_params_when_built_directly(self, params):
         with pytest.raises(ValueError, match="params must be a mapping"):
-            build_tasks(
-                [{"id": "prediction", "type": "NStepPrediction", "params": params}]
-            )
+            build_tasks([{"id": "prediction", "type": "NStepPrediction", "params": params}])
 
     def test_mapping_entries_reject_unknown_keys(self):
         with pytest.raises(ValueError, match=r"unknown keys.*name"):
@@ -133,9 +125,7 @@ class TestConfiguredTasks:
     def test_empty_tasks_replace_existing_public_targets(self):
         trial = Trial(
             symbols=["A"],
-            targets={
-                "old": Target(values=True, mask=None, granularity="per_trial")
-            },
+            targets={"old": Target(values=True, mask=None, granularity="per_trial")},
         )
         result = materialize_targets(trial, {})
         assert result is None
@@ -159,11 +149,7 @@ class TestConfiguredTasks:
     def test_intrinsic_task_copies_mutable_target_fields(self):
         trial = Trial(
             symbols=["A", "B"],
-            intrinsic_targets={
-                "nback_match": Target(
-                    values=[None, 1], mask=[False, True], granularity="per_token"
-                )
-            },
+            intrinsic_targets={"nback_match": Target(values=[None, 1], mask=[False, True], granularity="per_token")},
         )
         task = build_tasks([{"id": "match", "type": "NBackMatch"}])["match"]
         target = task(trial)
@@ -173,11 +159,7 @@ class TestConfiguredTasks:
     def test_intrinsic_task_rejects_runtime_granularity_mismatch(self):
         trial = Trial(
             symbols=["A"],
-            intrinsic_targets={
-                "nback_match": Target(
-                    values=True, mask=None, granularity="per_trial"
-                )
-            },
+            intrinsic_targets={"nback_match": Target(values=True, mask=None, granularity="per_trial")},
         )
         task = build("NBackMatch")
         with pytest.raises(ValueError, match=r"expects.*per_token.*got.*per_trial"):

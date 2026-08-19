@@ -128,7 +128,10 @@ class NBack(SymbolicSequencer):
             super().__init__(label=label, alphabet=alphabet, rng=rng, verbose=verbose)
         else:
             super().__init__(
-                label=label, alphabet_size=alphabet_size, rng=rng, verbose=verbose,
+                label=label,
+                alphabet_size=alphabet_size,
+                rng=rng,
+                verbose=verbose,
             )
 
         self.n = n
@@ -146,9 +149,7 @@ class NBack(SymbolicSequencer):
         self._validate_params()
         self._setup_lure_rates()
         self._validate_seq_length(self.seq_length)
-        self._intended_n_match, self._intended_n_lure = self._compute_intended_counts(
-            self.seq_length
-        )
+        self._intended_n_match, self._intended_n_lure = self._compute_intended_counts(self.seq_length)
 
         # Cache alphabet as numpy object array for faster .choice
         self._alphabet_arr = np.array(self.alphabet, dtype=object)
@@ -162,25 +163,16 @@ class NBack(SymbolicSequencer):
         if not (0.0 <= self.p_match <= 1.0):
             raise ValueError(f"p_match must be in [0, 1], got {self.p_match}.")
         if self.match_count_mode not in {"round", "sample"}:
-            raise ValueError(
-                f"match_count_mode must be 'round' or 'sample', got {self.match_count_mode!r}."
-            )
+            raise ValueError(f"match_count_mode must be 'round' or 'sample', got {self.match_count_mode!r}.")
         for k in self.lure_offsets:
             if k == 0:
                 raise ValueError("lure_offsets must not contain 0 (that's a true match).")
             if self.n + k <= 0:
-                raise ValueError(
-                    f"Invalid lure offset {k}: n + k must be >= 1 (n={self.n})."
-                )
+                raise ValueError(f"Invalid lure offset {k}: n + k must be >= 1 (n={self.n}).")
         if len(set(self.lure_offsets)) != len(self.lure_offsets):
             raise ValueError(f"lure_offsets must be unique, got {self.lure_offsets}.")
-        if self.alphabet_size < 2 and (
-            self.avoid_accidental_matches or self.lure_offsets
-        ):
-            raise ValueError(
-                "alphabet_size must be >= 2 when avoid_accidental_matches=True "
-                "or any lure is configured."
-            )
+        if self.alphabet_size < 2 and (self.avoid_accidental_matches or self.lure_offsets):
+            raise ValueError("alphabet_size must be >= 2 when avoid_accidental_matches=True or any lure is configured.")
         if self.max_attempts < 1:
             raise ValueError(f"max_attempts must be >= 1, got {self.max_attempts}.")
 
@@ -189,15 +181,10 @@ class NBack(SymbolicSequencer):
         call when a `seq_length` override is supplied).
         """
         if not isinstance(L, (int, np.integer)) or L <= self.n:
-            raise ValueError(
-                f"seq_length must be an integer > n (got seq_length={L!r}, n={self.n})."
-            )
+            raise ValueError(f"seq_length must be an integer > n (got seq_length={L!r}, n={self.n}).")
         for k in self.lure_offsets:
             if max(self.n, self.n + k) >= L:
-                raise ValueError(
-                    f"Lure offset {k} has empty eligible window "
-                    f"(seq_length={L}, n={self.n})."
-                )
+                raise ValueError(f"Lure offset {k} has empty eligible window (seq_length={L}, n={self.n}).")
 
     def _setup_lure_rates(self) -> None:
         """Coerce p_lure to a dict {offset: rate} and validate."""
@@ -206,13 +193,9 @@ class NBack(SymbolicSequencer):
             extra = set(p) - set(self.lure_offsets)
             missing = set(self.lure_offsets) - set(p)
             if extra:
-                raise ValueError(
-                    f"p_lure has keys not in lure_offsets: {sorted(extra)}."
-                )
+                raise ValueError(f"p_lure has keys not in lure_offsets: {sorted(extra)}.")
             if missing:
-                raise ValueError(
-                    f"p_lure missing entries for offsets: {sorted(missing)}."
-                )
+                raise ValueError(f"p_lure missing entries for offsets: {sorted(missing)}.")
             rates = {int(k): float(v) for k, v in p.items()}
         else:
             rates = {int(k): float(p) for k in self.lure_offsets}
@@ -231,10 +214,7 @@ class NBack(SymbolicSequencer):
         """
         n = self.n
         n_match = int(round(self.p_match * (L - n)))
-        n_lure = {
-            k: int(round(self.p_lure[k] * (L - max(n, n + k))))
-            for k in self.lure_offsets
-        }
+        n_lure = {k: int(round(self.p_lure[k] * (L - max(n, n + k)))) for k in self.lure_offsets}
         total = n_match + sum(n_lure.values())
         if total > L - n:
             raise ValueError(
@@ -245,9 +225,7 @@ class NBack(SymbolicSequencer):
 
     # ============================== Allocation ==============================
 
-    def _allocate_positions(
-        self, L: int, intended_n_match: int, intended_n_lure: dict[int, int]
-    ) -> dict:
+    def _allocate_positions(self, L: int, intended_n_match: int, intended_n_lure: dict[int, int]) -> dict:
         """Choose match, lure, and filler positions for one sequence of length L.
 
         Parameters
@@ -273,9 +251,7 @@ class NBack(SymbolicSequencer):
         lure_idx: dict[int, np.ndarray] = {}
         for k in self.lure_offsets:
             window_start = max(n, n + k)
-            available = np.array(
-                [i for i in range(window_start, L) if i not in used], dtype=int
-            )
+            available = np.array([i for i in range(window_start, L) if i not in used], dtype=int)
             if self.match_count_mode == "round":
                 n_lure_k = intended_n_lure[k]
             else:
@@ -286,7 +262,9 @@ class NBack(SymbolicSequencer):
             # spacing of 2 between such lures.
             if n + k == 1:
                 chosen = self._sample_with_min_spacing(
-                    available, n_lure_k, min_distance=2,
+                    available,
+                    n_lure_k,
+                    min_distance=2,
                 )
                 if chosen is None:
                     raise RuntimeError(
@@ -296,8 +274,7 @@ class NBack(SymbolicSequencer):
             else:
                 if n_lure_k > len(available):
                     raise RuntimeError(
-                        f"Cannot place {n_lure_k} lures at offset {k}: "
-                        f"only {len(available)} positions free."
+                        f"Cannot place {n_lure_k} lures at offset {k}: only {len(available)} positions free."
                     )
                 chosen = self.rng.choice(available, size=n_lure_k, replace=False)
             lure_idx[k] = chosen
@@ -305,9 +282,7 @@ class NBack(SymbolicSequencer):
 
         burn_in = np.arange(0, n)
         all_filled = used | set(int(i) for i in burn_in)
-        filler = np.array(
-            [i for i in range(L) if i not in all_filled], dtype=int
-        )
+        filler = np.array([i for i in range(L) if i not in all_filled], dtype=int)
 
         role: list = [None] * L
         for i in burn_in:
@@ -328,9 +303,7 @@ class NBack(SymbolicSequencer):
             "role": role,
         }
 
-    def _sample_with_min_spacing(
-        self, available: np.ndarray, k: int, min_distance: int
-    ) -> np.ndarray | None:
+    def _sample_with_min_spacing(self, available: np.ndarray, k: int, min_distance: int) -> np.ndarray | None:
         """Greedily pick k positions from `available` with pairwise distance
         >= `min_distance`. Returns None if not possible. Sampling order is
         random (controlled by self.rng).
@@ -404,9 +377,7 @@ class NBack(SymbolicSequencer):
 
     # ============================== Generation ==============================
 
-    def generate_string(
-        self, seq_length: int | None = None, *args, **kwargs
-    ) -> list[str]:
+    def generate_string(self, seq_length: int | None = None, *args, **kwargs) -> list[str]:
         """Generate one n-back sequence.
 
         Parameters
@@ -454,9 +425,7 @@ class NBack(SymbolicSequencer):
             f"Consider increasing alphabet_size or relaxing constraints."
         )
 
-    def generate_string_set(
-        self, n_samples: int = 1, seq_length: int | None = None, **kwargs
-    ) -> list[list[str]]:
+    def generate_string_set(self, n_samples: int = 1, seq_length: int | None = None, **kwargs) -> list[list[str]]:
         """Generate a batch of n-back sequences (all sharing the same length).
 
         Parameters
@@ -472,10 +441,7 @@ class NBack(SymbolicSequencer):
             List of n_samples sequences, each of length `seq_length` (or
             `self.seq_length` if not given).
         """
-        return [
-            self.generate_string(seq_length=seq_length, **kwargs)
-            for _ in range(n_samples)
-        ]
+        return [self.generate_string(seq_length=seq_length, **kwargs) for _ in range(n_samples)]
 
     # ============================ Trial-based API ============================
 
@@ -490,7 +456,7 @@ class NBack(SymbolicSequencer):
         Burn-in positions (i < n) are masked out via ``Target.mask``.
         """
         symbols = self.generate_string(seq_length=seq_length, **kwargs)
-        binary_labels = self.label_sequence(symbols)        # -1 at burn-in, else 0/1
+        binary_labels = self.label_sequence(symbols)  # -1 at burn-in, else 0/1
         role_labels = self.label_sequence_multiclass(symbols)  # -1 at burn-in, else 0/1/2..
 
         valid_mask = [i >= self.n for i in range(len(symbols))]
@@ -499,12 +465,8 @@ class NBack(SymbolicSequencer):
         role_values = [int(v) if v != -1 else None for v in role_labels.tolist()]
 
         intrinsic_targets = {
-            "nback_match": Target(
-                values=match_values, mask=valid_mask, granularity="per_token"
-            ),
-            "nback_role": Target(
-                values=role_values, mask=valid_mask, granularity="per_token"
-            ),
+            "nback_match": Target(values=match_values, mask=valid_mask, granularity="per_token"),
+            "nback_role": Target(values=role_values, mask=valid_mask, granularity="per_token"),
         }
 
         meta = {
@@ -618,9 +580,7 @@ class NBack(SymbolicSequencer):
         n_accidental_match = len(realised_match_set - intended_match_set)
         n_missing_match = len(intended_match_set - realised_match_set)
 
-        intended_lure_sets = {
-            k: set(int(i) for i in alloc["lure"][k]) for k in self.lure_offsets
-        }
+        intended_lure_sets = {k: set(int(i) for i in alloc["lure"][k]) for k in self.lure_offsets}
         accidental_lure: dict[int, int] = {}
         missing_lure: dict[int, int] = {}
         n_lure_realised: dict[int, int] = {}
@@ -639,10 +599,7 @@ class NBack(SymbolicSequencer):
             n_missing_match == 0
             and all(v == 0 for v in missing_lure.values())
             and (not self.avoid_accidental_matches or n_accidental_match == 0)
-            and (
-                not self.avoid_accidental_lures
-                or all(v == 0 for v in accidental_lure.values())
-            )
+            and (not self.avoid_accidental_lures or all(v == 0 for v in accidental_lure.values()))
         )
 
         return {

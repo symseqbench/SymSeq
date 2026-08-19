@@ -400,12 +400,8 @@ class nAX(ArtificialGrammar):
         """
         trial = super().generate_trial(*args, **kwargs)
         label, is_target = self.label_trial(trial.symbols)
-        trial.intrinsic_targets["nax_label"] = Target(
-            values=label, mask=None, granularity="per_trial"
-        )
-        trial.intrinsic_targets["nax_is_target"] = Target(
-            values=is_target, mask=None, granularity="per_trial"
-        )
+        trial.intrinsic_targets["nax_label"] = Target(values=label, mask=None, granularity="per_trial")
+        trial.intrinsic_targets["nax_is_target"] = Target(values=is_target, mask=None, granularity="per_trial")
         trial.meta["paradigm"] = "nAX"
         trial.meta["n_contexts"] = len(self.contexts)
         return trial
@@ -442,6 +438,6 @@ class nAX(ArtificialGrammar):
 
         i = self._ctx_index[ctx]
         if i == j:
-            return (f"C{i+1}->T", True)
+            return (f"C{i + 1}->T", True)
         else:
-            return (f"C{i+1}->L({j+1})", False)
+            return (f"C{i + 1}->L({j + 1})", False)

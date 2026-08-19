@@ -655,6 +655,7 @@ class TestTrialAPI:
 
     def test_generate_trial_returns_trial(self):
         from symseq.trial import Trial, Target
+
         gen = DyckGenerator(k=2, mode="stack", rng=np.random.default_rng(42))
         trial = gen.generate_trial()
         assert isinstance(trial, Trial)
@@ -691,6 +692,7 @@ class TestTrialAPI:
 
     def test_generate_trials_batch(self):
         from symseq.trial import Trial
+
         gen = DyckGenerator(k=2, mode="stack", rng=np.random.default_rng(42))
         trials = gen.generate_trials(n=4)
         assert len(trials) == 4
@@ -700,6 +702,7 @@ class TestTrialAPI:
     def test_draw_trial_and_draw_batch_protocol(self):
         from symseq.trial import Trial
         from symseq.trial_source import TrialSource
+
         gen = DyckGenerator(k=2, mode="stack", rng=np.random.default_rng(42))
         assert isinstance(gen, TrialSource)
         t = gen.draw_trial()
@@ -710,6 +713,7 @@ class TestTrialAPI:
     def test_iter_trials_yields_trials(self):
         from itertools import islice
         from symseq.trial import Trial
+
         gen = DyckGenerator(k=2, mode="stack", rng=np.random.default_rng(42))
         first_five = list(islice(gen.iter_trials(), 5))
         assert len(first_five) == 5
@@ -725,6 +729,7 @@ class TestTrialAPI:
     def test_registry_builds_dyck(self):
         from symseq.generators.registry import build, registered_names
         from symseq.trial import Trial
+
         assert "Dyck" in registered_names()
         gen = build("Dyck", k=2, mode="stack", rng=np.random.default_rng(42))
         assert isinstance(gen, DyckGenerator)
