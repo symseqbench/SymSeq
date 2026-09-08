@@ -14,16 +14,21 @@ import random
 
 import networkx as nx
 import numpy as np
-from sklearn.preprocessing import normalize
 
 from symseq.core import state
 from symseq.core.state import State
-from symseq.grammars.ag.synthesis import generate_grammar_with_target_te_complexity
+from symseq.generators.ag.synthesis import generate_grammar_with_target_te_complexity
 from symseq.utils.io import get_logger
 
 logger = get_logger(__name__)
 
 default_alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+
+
+def _normalize_rows_l1(matrix: np.ndarray) -> np.ndarray:
+    matrix = np.asarray(matrix, dtype=float)
+    row_sums = matrix.sum(axis=1, keepdims=True)
+    return np.divide(matrix, row_sums, out=np.zeros_like(matrix, dtype=float), where=row_sums != 0)
 
 
 def _validate_parameters(alphabet_size, ambiguities, ambiguity_depth, n_terminal_states):
@@ -152,11 +157,11 @@ def generate_random_grammar(
 
         # assume equiprobable transitions
         if assume_equiprobable:
-            A = normalize(A, axis=1, norm="l1")
+            A = _normalize_rows_l1(A)
         else:
             raise NotImplementedError("Non-equiprobable transitions not implemented yet.")
             A = np.asarray(A * t.todense())
-            A = normalize(A, axis=1, norm="l1")
+            A = _normalize_rows_l1(A)
 
         # store transitions
         transitions = []
@@ -397,7 +402,7 @@ def grammar_with_complexity(
     **synthesis_kwargs,
 ):
     """
-    Thin wrapper for `symseq.grammars.ag.synthesis.generate_grammar` to generate a grammar with a target TE complexity.
+    Thin wrapper for `symseq.generators.ag.synthesis.generate_grammar` to generate a grammar with a target TE complexity.
     """
     if transition_density and "p_mean" in synthesis_kwargs:
         if transition_density != synthesis_kwargs["p_mean"]:
@@ -455,7 +460,7 @@ def grammar_with_complexity(
         adj_mat[states.index(s), -1] = 1
 
     # assume equiprobable transitions
-    A = normalize(adj_mat, axis=1, norm="l1")
+    A = _normalize_rows_l1(adj_mat)
 
     # store transitions
     transitions = []

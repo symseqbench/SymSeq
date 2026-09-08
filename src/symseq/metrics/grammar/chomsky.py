@@ -11,8 +11,9 @@ import numpy as np
 from tqdm import tqdm
 
 
-def chomsky_classification(sequence: list[str], verbose: bool = False,
-                          max_search_positions: int = 500, max_pairs: int = 1000) -> dict:
+def chomsky_classification(
+    sequence: list[str], verbose: bool = False, max_search_positions: int = 500, max_pairs: int = 1000
+) -> dict:
     """
     Classify sequence position in Chomsky hierarchy.
 
@@ -54,13 +55,7 @@ def chomsky_classification(sequence: list[str], verbose: bool = False,
     IRE Transactions on Information Theory, 2(3), 113-124.
     """
     if len(sequence) < 3:
-        return {
-            'type': None,
-            'confidence': 0.0,
-            'scores': {},
-            'patterns': {},
-            'reliable': False
-        }
+        return {"type": None, "confidence": 0.0, "scores": {}, "patterns": {}, "reliable": False}
 
     if verbose:
         print(f"Classifying sequence of length {len(sequence)} in Chomsky hierarchy...")
@@ -71,12 +66,14 @@ def chomsky_classification(sequence: list[str], verbose: bool = False,
         print("  Checking Type 3 (Regular) patterns...")
     type3_patterns = {}
     type3_detectors = [
-        ('repetition', _detect_repetition),
-        ('alternation', _detect_alternation),
-        ('periodicity', _detect_cycle),
-        ('fsa_determinism', _detect_finite_state),
+        ("repetition", _detect_repetition),
+        ("alternation", _detect_alternation),
+        ("periodicity", _detect_cycle),
+        ("fsa_determinism", _detect_finite_state),
     ]
-    for name, detector in (tqdm(type3_detectors, desc="Type 3 patterns", disable=not verbose) if verbose else type3_detectors):
+    for name, detector in (
+        tqdm(type3_detectors, desc="Type 3 patterns", disable=not verbose) if verbose else type3_detectors
+    ):
         type3_patterns[name] = detector(sequence)
 
     # Type 2 (Context-Free) patterns
@@ -84,12 +81,14 @@ def chomsky_classification(sequence: list[str], verbose: bool = False,
         print("  Checking Type 2 (Context-Free) patterns...")
     type2_patterns = {}
     type2_detectors = [
-        ('balanced_pairs', _detect_balanced_parentheses),
-        ('center_embedding', _detect_center_embedding),
-        ('nested_structures', _detect_nested_structures),
-        ('palindromes', _detect_palindromes),
+        ("balanced_pairs", _detect_balanced_parentheses),
+        ("center_embedding", _detect_center_embedding),
+        ("nested_structures", _detect_nested_structures),
+        ("palindromes", _detect_palindromes),
     ]
-    for name, detector in (tqdm(type2_detectors, desc="Type 2 patterns", disable=not verbose) if verbose else type2_detectors):
+    for name, detector in (
+        tqdm(type2_detectors, desc="Type 2 patterns", disable=not verbose) if verbose else type2_detectors
+    ):
         type2_patterns[name] = detector(sequence)
 
     # Type 1 (Context-Sensitive) patterns
@@ -97,12 +96,14 @@ def chomsky_classification(sequence: list[str], verbose: bool = False,
         print("  Checking Type 1 (Context-Sensitive) patterns...")
     type1_patterns = {}
     type1_detectors = [
-        ('triple_dependencies', lambda seq: _detect_triple_dependencies(seq, max_search_positions)),
-        ('crossing_dependencies', lambda seq: _detect_crossing_dependencies(seq, max_pairs)),
-        ('length_sensitive', _detect_length_sensitive),
-        ('context_dependent', _detect_context_dependent),
+        ("triple_dependencies", lambda seq: _detect_triple_dependencies(seq, max_search_positions)),
+        ("crossing_dependencies", lambda seq: _detect_crossing_dependencies(seq, max_pairs)),
+        ("length_sensitive", _detect_length_sensitive),
+        ("context_dependent", _detect_context_dependent),
     ]
-    for name, detector in (tqdm(type1_detectors, desc="Type 1 patterns", disable=not verbose) if verbose else type1_detectors):
+    for name, detector in (
+        tqdm(type1_detectors, desc="Type 1 patterns", disable=not verbose) if verbose else type1_detectors
+    ):
         type1_patterns[name] = detector(sequence)
 
     # Type 0 (Unrestricted) patterns
@@ -118,8 +119,8 @@ def chomsky_classification(sequence: list[str], verbose: bool = False,
     # But also consider that true randomness has high ApEn
     # Regular processes have LOW compression ratio AND moderate ApEn
     type0_patterns = {
-        'incompressibility': kolmogorov,  # High ratio = incompressible
-        'irregularity': apen,  # High ApEn = unpredictable
+        "incompressibility": kolmogorov,  # High ratio = incompressible
+        "irregularity": apen,  # High ApEn = unpredictable
     }
 
     type3_score = np.mean(list(type3_patterns.values()))
@@ -128,79 +129,87 @@ def chomsky_classification(sequence: list[str], verbose: bool = False,
     type0_score = np.mean(list(type0_patterns.values()))
 
     # Boost Type 3 if FSA determinism is high (Markov chains should score high here)
-    if type3_patterns.get('fsa_determinism', 0) > 0.6:
+    if type3_patterns.get("fsa_determinism", 0) > 0.6:
         type3_score = min(1.0, type3_score * 1.3)
 
     scores = {
-        'type3': type3_score,
-        'type2': type2_score,
-        'type1': type1_score,
-        'type0': type0_score,
+        "type3": type3_score,
+        "type2": type2_score,
+        "type1": type1_score,
+        "type0": type0_score,
     }
 
     if verbose:
-        print(f"\n  Raw scores: Type3={type3_score:.3f}, Type2={type2_score:.3f}, Type1={type1_score:.3f}, Type0={type0_score:.3f}")
-        print(f"  Key patterns: FSA_det={type3_patterns.get('fsa_determinism', 0):.3f}, Kolmogorov={kolmogorov:.3f}, ApEn={apen:.3f}")
+        print(
+            f"\n  Raw scores: Type3={type3_score:.3f}, Type2={type2_score:.3f}, Type1={type1_score:.3f}, Type0={type0_score:.3f}"
+        )
+        print(
+            f"  Key patterns: FSA_det={type3_patterns.get('fsa_determinism', 0):.3f}, Kolmogorov={kolmogorov:.3f}, ApEn={apen:.3f}"
+        )
 
     adjusted_scores = scores.copy()
 
     # Hierarchy enforcement: prefer simpler classes
     if type3_score > 0.5:  # Lowered threshold for Type 3
-        adjusted_scores['type2'] *= 0.5
-        adjusted_scores['type1'] *= 0.5
-        adjusted_scores['type0'] *= 0.3  # Strong penalty
+        adjusted_scores["type2"] *= 0.5
+        adjusted_scores["type1"] *= 0.5
+        adjusted_scores["type0"] *= 0.3  # Strong penalty
     if type2_score > 0.4:
-        adjusted_scores['type0'] *= 0.5
-        adjusted_scores['type1'] *= 0.7
+        adjusted_scores["type0"] *= 0.5
+        adjusted_scores["type1"] *= 0.7
     if type1_score > 0.4:
-        adjusted_scores['type0'] *= 0.5
+        adjusted_scores["type0"] *= 0.5
 
     max_score = max(adjusted_scores.values())
     estimated_type = max(adjusted_scores.keys(), key=lambda k: adjusted_scores[k])
-    estimated_type_num = int(estimated_type.replace('type', ''))
+    estimated_type_num = int(estimated_type.replace("type", ""))
 
     reliable = max_score > 0.3 and len(sequence) > 20
 
     # Build evidence string
-    type_names = {3: 'Regular (Type 3)', 2: 'Context-Free (Type 2)',
-                  1: 'Context-Sensitive (Type 1)', 0: 'Unrestricted (Type 0)'}
+    type_names = {
+        3: "Regular (Type 3)",
+        2: "Context-Free (Type 2)",
+        1: "Context-Sensitive (Type 1)",
+        0: "Unrestricted (Type 0)",
+    }
     evidence_parts = []
     if estimated_type_num == 3:
-        if type3_patterns.get('periodicity', 0) > 0.5:
-            evidence_parts.append('Strong periodic patterns')
-        if type3_patterns.get('fsa_determinism', 0) > 0.5:
-            evidence_parts.append('Deterministic FSA transitions')
+        if type3_patterns.get("periodicity", 0) > 0.5:
+            evidence_parts.append("Strong periodic patterns")
+        if type3_patterns.get("fsa_determinism", 0) > 0.5:
+            evidence_parts.append("Deterministic FSA transitions")
     elif estimated_type_num == 2:
-        if type2_patterns.get('balanced_pairs', 0) > 0.3:
-            evidence_parts.append('Balanced A^nB^n patterns')
-        if type2_patterns.get('nested_structures', 0) > 0.3:
-            evidence_parts.append('Nested structures')
+        if type2_patterns.get("balanced_pairs", 0) > 0.3:
+            evidence_parts.append("Balanced A^nB^n patterns")
+        if type2_patterns.get("nested_structures", 0) > 0.3:
+            evidence_parts.append("Nested structures")
     elif estimated_type_num == 1:
-        if type1_patterns.get('triple_dependencies', 0) > 0.3:
-            evidence_parts.append('A^nB^nC^n patterns')
-        if type1_patterns.get('crossing_dependencies', 0) > 0.3:
-            evidence_parts.append('Crossing dependencies')
+        if type1_patterns.get("triple_dependencies", 0) > 0.3:
+            evidence_parts.append("A^nB^nC^n patterns")
+        if type1_patterns.get("crossing_dependencies", 0) > 0.3:
+            evidence_parts.append("Crossing dependencies")
     else:
-        if type0_patterns.get('incompressibility', 0) > 0.7:
-            evidence_parts.append('High incompressibility (poor compression)')
-        if type0_patterns.get('irregularity', 0) > 0.5:
-            evidence_parts.append('High irregularity (unpredictable)')
+        if type0_patterns.get("incompressibility", 0) > 0.7:
+            evidence_parts.append("High incompressibility (poor compression)")
+        if type0_patterns.get("irregularity", 0) > 0.5:
+            evidence_parts.append("High irregularity (unpredictable)")
 
-    evidence = '; '.join(evidence_parts) if evidence_parts else 'No strong patterns detected'
+    evidence = "; ".join(evidence_parts) if evidence_parts else "No strong patterns detected"
 
     return {
-        'type': estimated_type_num,
-        'classification': type_names.get(estimated_type_num, f'Type {estimated_type_num}'),
-        'confidence': max_score,
-        'scores': scores,
-        'patterns': {
-            'type3': type3_patterns,
-            'type2': type2_patterns,
-            'type1': type1_patterns,
-            'type0': type0_patterns,
+        "type": estimated_type_num,
+        "classification": type_names.get(estimated_type_num, f"Type {estimated_type_num}"),
+        "confidence": max_score,
+        "scores": scores,
+        "patterns": {
+            "type3": type3_patterns,
+            "type2": type2_patterns,
+            "type1": type1_patterns,
+            "type0": type0_patterns,
         },
-        'evidence': evidence,
-        'reliable': reliable
+        "evidence": evidence,
+        "reliable": reliable,
     }
 
 
@@ -213,7 +222,7 @@ def _detect_repetition(sequence: list[str]) -> float:
 
     for unit_length in range(1, min(len(sequence) // 2 + 1, 10)):
         for start in range(min(unit_length, len(sequence))):
-            unit = ''.join(sequence[start:start + unit_length])
+            unit = "".join(sequence[start : start + unit_length])
             if not unit:
                 continue
 
@@ -222,7 +231,7 @@ def _detect_repetition(sequence: list[str]) -> float:
             i = start
             while i + unit_length <= len(sequence):
                 total_possible += 1
-                current_unit = ''.join(sequence[i:i + unit_length])
+                current_unit = "".join(sequence[i : i + unit_length])
                 if current_unit == unit:
                     matches += 1
                 i += unit_length
@@ -249,7 +258,7 @@ def _detect_alternation(sequence: list[str]) -> float:
 
         for i in range(0, len(sequence) - pattern_length + 1, pattern_length):
             total_checks += 1
-            current_segment = sequence[i:i + pattern_length]
+            current_segment = sequence[i : i + pattern_length]
             if current_segment == pattern:
                 matches += 1
 
@@ -369,7 +378,7 @@ def _detect_center_embedding(sequence: list[str]) -> float:
 
     for length in range(3, min(len(sequence) + 1, 20)):
         for start in range(len(sequence) - length + 1):
-            subseq = sequence[start:start + length]
+            subseq = sequence[start : start + length]
             if subseq == subseq[::-1]:
                 confidence = length / len(sequence)
                 best_confidence = max(best_confidence, confidence)
@@ -421,14 +430,14 @@ def _detect_palindromes(sequence: list[str]) -> float:
 
 def _detect_triple_dependencies(sequence: list[str], max_search_positions: int = 500) -> float:
     """Detect A^n B^n C^n patterns.
-    
+
     Parameters
     ----------
     sequence : list of str
         Symbolic sequence.
     max_search_positions : int, default=500
         Maximum number of positions to search. Limits computational complexity.
-    
+
     Returns
     -------
     float
@@ -495,14 +504,14 @@ def _detect_triple_dependencies(sequence: list[str], max_search_positions: int =
 
 def _detect_crossing_dependencies(sequence: list[str], max_pairs: int = 1000) -> float:
     """Detect crossing (non-nested) dependencies.
-    
+
     Parameters
     ----------
     sequence : list of str
         Symbolic sequence.
     max_pairs : int, default=1000
         Maximum number of pairs to consider. Limits computational complexity.
-    
+
     Returns
     -------
     float
@@ -530,7 +539,7 @@ def _detect_crossing_dependencies(sequence: list[str], max_pairs: int = 1000) ->
     max_comparisons = 5000
 
     for i, (a1, a2) in enumerate(pairs):
-        for b1, b2 in pairs[i + 1:]:
+        for b1, b2 in pairs[i + 1 :]:
             total_pairs += 1
             if a1 < b1 < a2 < b2:
                 crossing_pairs += 1
@@ -591,9 +600,9 @@ def _estimate_kolmogorov_complexity(sequence: list[str]) -> float:
     if not sequence:
         return 0.0
 
-    string_repr = ''.join(sequence)
+    string_repr = "".join(sequence)
     original_size = len(string_repr)
-    compressed_size = len(compress(string_repr.encode('utf-8')))
+    compressed_size = len(compress(string_repr.encode("utf-8")))
 
     complexity = compressed_size / original_size if original_size > 0 else 0
     return min(complexity, 1.0)
@@ -607,7 +616,7 @@ def _calculate_approximate_entropy(sequence: list[str], m: int = 2, r: float = 0
     def _phi(m_val):
         patterns = []
         for i in range(len(sequence) - m_val + 1):
-            patterns.append(tuple(sequence[i:i + m_val]))
+            patterns.append(tuple(sequence[i : i + m_val]))
 
         pattern_counts = Counter(patterns)
         n = len(patterns)

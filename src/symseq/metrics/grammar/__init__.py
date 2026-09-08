@@ -17,14 +17,14 @@ from .markov import markov_order_selection, vlmc_fit
 from .topological import topological_entropy
 
 __all__ = [
-    'topological_entropy',
-    'markov_order_selection',
-    'vlmc_fit',
-    'mi_decay_analysis',
-    'mi_decay_analysis_parallel',
-    'grassberger_entropy',
-    'chomsky_classification',
-    'grammar_rule_complexity',
-    'grammar_state_complexity',
-    'cyk_parse',
+    "topological_entropy",
+    "markov_order_selection",
+    "vlmc_fit",
+    "mi_decay_analysis",
+    "mi_decay_analysis_parallel",
+    "grassberger_entropy",
+    "chomsky_classification",
+    "grammar_rule_complexity",
+    "grammar_state_complexity",
+    "cyk_parse",
 ]

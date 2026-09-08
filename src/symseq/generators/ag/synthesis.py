@@ -61,7 +61,7 @@ def generate_grammar_with_target_te_complexity(
     else:
         connection_probability = p_mean
 
-    logger.info(f"Target average connection probability: { p_mean}")
+    logger.info(f"Target average connection probability: {p_mean}")
 
     # initial network generation
     edges = rng.poisson(connection_probability * number_of_possible_edges)  # / 0.6

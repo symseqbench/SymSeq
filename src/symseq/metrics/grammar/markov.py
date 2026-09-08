@@ -9,11 +9,7 @@ from collections import Counter, defaultdict
 import numpy as np
 
 
-def markov_order_selection(
-    sequence: list[str],
-    max_order: int = 5,
-    criterion: str = 'BIC'
-) -> dict:
+def markov_order_selection(sequence: list[str], max_order: int = 5, criterion: str = "BIC") -> dict:
     """
     Select optimal Markov order using information criteria.
 
@@ -77,7 +73,7 @@ def markov_order_selection(
 
             contexts = defaultdict(lambda: defaultdict(int))
             for i in range(order, n):
-                context = tuple(sequence[i - order:i])
+                context = tuple(sequence[i - order : i])
                 next_symbol = sequence[i]
                 contexts[context][next_symbol] += 1
 
@@ -99,9 +95,9 @@ def markov_order_selection(
 
         log_likelihoods.append(log_L)
 
-        if criterion == 'BIC':
+        if criterion == "BIC":
             IC = -2 * log_L + k * np.log(n)
-        elif criterion == 'AIC':
+        elif criterion == "AIC":
             IC = -2 * log_L + 2 * k
         else:
             raise ValueError(f"Unknown criterion: {criterion}")
@@ -113,10 +109,10 @@ def markov_order_selection(
     transition_matrix = _build_transition_matrix(sequence, optimal_order, alphabet)
 
     return {
-        'optimal_order': optimal_order,
-        'scores': scores,
-        'log_likelihoods': log_likelihoods,
-        'transition_matrix': transition_matrix,
+        "optimal_order": optimal_order,
+        "scores": scores,
+        "log_likelihoods": log_likelihoods,
+        "transition_matrix": transition_matrix,
     }
 
 
@@ -130,7 +126,7 @@ def _build_transition_matrix(sequence, order, alphabet):
 
     contexts = defaultdict(lambda: defaultdict(int))
     for i in range(order, len(sequence)):
-        context = tuple(sequence[i - order:i])
+        context = tuple(sequence[i - order : i])
         next_symbol = sequence[i]
         contexts[context][next_symbol] += 1
 
@@ -142,12 +138,7 @@ def _build_transition_matrix(sequence, order, alphabet):
     return transition_probs
 
 
-def vlmc_fit(
-    sequence: list[str],
-    max_depth: int = 10,
-    pruning_threshold: float = 0.01,
-    min_count: int = 2
-) -> dict:
+def vlmc_fit(sequence: list[str], max_depth: int = 10, pruning_threshold: float = 0.01, min_count: int = 2) -> dict:
     """
     Fit Variable-Length Markov Chain (VLMC) model.
 
@@ -196,17 +187,14 @@ def vlmc_fit(
     >>> result['num_contexts']
     """
     if len(sequence) < max_depth + 1:
-        warnings.warn(
-            f"Sequence length ({len(sequence)}) should be >> max_depth ({max_depth})",
-            UserWarning
-        )
+        warnings.warn(f"Sequence length ({len(sequence)}) should be >> max_depth ({max_depth})", UserWarning)
 
     alphabet = set(sequence)
     contexts = defaultdict(lambda: defaultdict(int))
 
     for i in range(len(sequence)):
         for depth in range(1, min(max_depth + 1, i + 1)):
-            context = tuple(sequence[i - depth:i])
+            context = tuple(sequence[i - depth : i])
             if i < len(sequence):
                 next_symbol = sequence[i]
                 contexts[context][next_symbol] += 1
@@ -225,9 +213,8 @@ def vlmc_fit(
                 max_depth_used = max(max_depth_used, len(context))
 
     return {
-        'context_tree': context_tree,
-        'num_contexts': len(context_tree),
-        'max_depth_used': max_depth_used,
-        'alphabet': alphabet,
+        "context_tree": context_tree,
+        "num_contexts": len(context_tree),
+        "max_depth_used": max_depth_used,
+        "alphabet": alphabet,
     }
-

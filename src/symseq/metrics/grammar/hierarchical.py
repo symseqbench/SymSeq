@@ -57,7 +57,7 @@ def mi_decay_analysis(
     n_shuffles: int = 1000,
     confidence_level: float = 0.95,
     random_state: int | None = None,
-    verbose: bool = False
+    verbose: bool = False,
 ) -> dict:
     """
     Analyze hierarchical structure via mutual information decay.
@@ -158,9 +158,9 @@ def mi_decay_analysis(
 
     convergence_dist = 0
     for i in range(len(mi_adjusted) - window_size + 1):
-        if np.all(mi_adjusted[i:i+window_size] < convergence_threshold):
+        if np.all(mi_adjusted[i : i + window_size] < convergence_threshold):
             # Return the distance just before the convergence window
-            convergence_dist = int(distances[max(0, i-1)]) if i > 0 else 0
+            convergence_dist = int(distances[max(0, i - 1)]) if i > 0 else 0
             break
 
     # Use the more conservative (smaller) of the two methods
@@ -177,20 +177,20 @@ def mi_decay_analysis(
     model_comparison = _compare_decay_models(distances, mi_adjusted, max_sig_dist)
 
     return {
-        'distances': distances,
-        'mi_values': mi_values,
-        'mi_adjusted': mi_adjusted,
-        'mi_baseline': mi_baseline,
-        'mi_ci_lower': mi_ci_lower,
-        'mi_ci_upper': mi_ci_upper,
-        'max_significant_distance': max_sig_dist,
-        'max_significant_distance_ci': max_sig_dist_ci,
-        'convergence_distance': convergence_dist,
-        'convergence_threshold': convergence_threshold,
-        'sequence_length': len(sequence),
-        'best_model': model_comparison['best_model'],
-        'model_fits': model_comparison['model_fits'],
-        'model_weights': model_comparison['weights'],
+        "distances": distances,
+        "mi_values": mi_values,
+        "mi_adjusted": mi_adjusted,
+        "mi_baseline": mi_baseline,
+        "mi_ci_lower": mi_ci_lower,
+        "mi_ci_upper": mi_ci_upper,
+        "max_significant_distance": max_sig_dist,
+        "max_significant_distance_ci": max_sig_dist_ci,
+        "convergence_distance": convergence_dist,
+        "convergence_threshold": convergence_threshold,
+        "sequence_length": len(sequence),
+        "best_model": model_comparison["best_model"],
+        "model_fits": model_comparison["model_fits"],
+        "model_weights": model_comparison["weights"],
     }
 
 
@@ -215,7 +215,7 @@ def mi_decay_analysis_parallel(
     confidence_level: float = 0.95,
     random_state: int | None = None,
     n_jobs: int = -1,
-    verbose: bool = False
+    verbose: bool = False,
 ) -> dict:
     """
     Analyze hierarchical structure via mutual information decay using parallel processing.
@@ -292,7 +292,7 @@ def mi_decay_analysis_parallel(
             mi_values[i] = _mutual_information(x_seq, y_seq)
 
     # Parallel shuffle computation
-    mi_shuffled_list = Parallel(n_jobs=n_jobs, backend='loky')(
+    mi_shuffled_list = Parallel(n_jobs=n_jobs, backend="loky")(
         delayed(_compute_shuffle_mi)(sequence, distances, seed)
         for seed in tqdm(seeds, desc="Computing shuffled baseline (parallel)", disable=not verbose)
     )
@@ -319,8 +319,8 @@ def mi_decay_analysis_parallel(
 
     convergence_dist = 0
     for i in range(len(mi_adjusted) - window_size + 1):
-        if np.all(mi_adjusted[i:i+window_size] < convergence_threshold):
-            convergence_dist = int(distances[max(0, i-1)]) if i > 0 else 0
+        if np.all(mi_adjusted[i : i + window_size] < convergence_threshold):
+            convergence_dist = int(distances[max(0, i - 1)]) if i > 0 else 0
             break
 
     # Use the more conservative (smaller) of the two methods
@@ -336,20 +336,20 @@ def mi_decay_analysis_parallel(
     model_comparison = _compare_decay_models(distances, mi_adjusted, max_sig_dist)
 
     return {
-        'distances': distances,
-        'mi_values': mi_values,
-        'mi_adjusted': mi_adjusted,
-        'mi_baseline': mi_baseline,
-        'mi_ci_lower': mi_ci_lower,
-        'mi_ci_upper': mi_ci_upper,
-        'max_significant_distance': max_sig_dist,
-        'max_significant_distance_ci': max_sig_dist_ci,
-        'convergence_distance': convergence_dist,
-        'convergence_threshold': convergence_threshold,
-        'sequence_length': len(sequence),
-        'best_model': model_comparison['best_model'],
-        'model_fits': model_comparison['model_fits'],
-        'model_weights': model_comparison['weights'],
+        "distances": distances,
+        "mi_values": mi_values,
+        "mi_adjusted": mi_adjusted,
+        "mi_baseline": mi_baseline,
+        "mi_ci_lower": mi_ci_lower,
+        "mi_ci_upper": mi_ci_upper,
+        "max_significant_distance": max_sig_dist,
+        "max_significant_distance_ci": max_sig_dist_ci,
+        "convergence_distance": convergence_dist,
+        "convergence_threshold": convergence_threshold,
+        "sequence_length": len(sequence),
+        "best_model": model_comparison["best_model"],
+        "model_fits": model_comparison["model_fits"],
+        "model_weights": model_comparison["weights"],
     }
 
 
@@ -400,19 +400,19 @@ def _fit_decay_model(x_data: np.ndarray, y_data: np.ndarray, model_type: str) ->
     y = y_data[valid]
 
     if len(x) < 3:
-        return {'success': False, 'aicc': np.inf}
+        return {"success": False, "aicc": np.inf}
 
-    if model_type == 'exponential':
+    if model_type == "exponential":
         model_func = _exponential_model
         p0 = [y[0], 0.1]
         bounds = ([0, 0], [np.inf, np.inf])
         n_params = 2
-    elif model_type == 'power_law':
+    elif model_type == "power_law":
         model_func = _power_law_model
         p0 = [y[0] * x[0], 1.0]
         bounds = ([0, 0], [np.inf, np.inf])
         n_params = 2
-    elif model_type == 'composite':
+    elif model_type == "composite":
         model_func = _composite_model
         p0 = [y[0] * 0.5, 0.1, y[0] * 0.5, 1.0]
         bounds = ([0, 0, 0, 0], [np.inf, np.inf, np.inf, np.inf])
@@ -428,7 +428,7 @@ def _fit_decay_model(x_data: np.ndarray, y_data: np.ndarray, model_type: str) ->
         mse = np.mean(residuals**2)
 
         ss_res = np.sum(residuals**2)
-        ss_tot = np.sum((y - np.mean(y))**2)
+        ss_tot = np.sum((y - np.mean(y)) ** 2)
         r_squared = 1 - (ss_res / ss_tot) if ss_tot != 0 else 0
 
         n = len(y)
@@ -438,23 +438,23 @@ def _fit_decay_model(x_data: np.ndarray, y_data: np.ndarray, model_type: str) ->
         bic = n * np.log(mse) + n_params * np.log(n)
 
         return {
-            'success': True,
-            'model_type': model_type,
-            'parameters': popt,
-            'aicc': aicc,
-            'bic': bic,
-            'r_squared': r_squared,
-            'rmse': np.sqrt(mse),
+            "success": True,
+            "model_type": model_type,
+            "parameters": popt,
+            "aicc": aicc,
+            "bic": bic,
+            "r_squared": r_squared,
+            "rmse": np.sqrt(mse),
         }
 
     except Exception:
-        return {'success': False, 'model_type': model_type, 'aicc': np.inf, 'bic': np.inf}
+        return {"success": False, "model_type": model_type, "aicc": np.inf, "bic": np.inf}
 
 
 def _compare_decay_models(distances: np.ndarray, mi_adjusted: np.ndarray, max_sig_dist: int) -> dict:
     """Fit all models and select best using BIC."""
     if max_sig_dist == 0:
-        return {'best_model': 'none', 'model_fits': {}, 'weights': {}}
+        return {"best_model": "none", "model_fits": {}, "weights": {}}
 
     # Use at least first 10 points for model fitting, or up to max_sig_dist, whichever is larger
     # This ensures we have enough data to fit models properly
@@ -472,29 +472,25 @@ def _compare_decay_models(distances: np.ndarray, mi_adjusted: np.ndarray, max_si
 
     # Need at least 5 points to fit composite model (4 params + 1 degree of freedom)
     if len(x_data) < 5:
-        return {'best_model': 'insufficient_data', 'model_fits': {}, 'weights': {}}
+        return {"best_model": "insufficient_data", "model_fits": {}, "weights": {}}
 
     model_fits = {}
-    for model_type in ['exponential', 'power_law', 'composite']:
+    for model_type in ["exponential", "power_law", "composite"]:
         model_fits[model_type] = _fit_decay_model(x_data, y_data, model_type)
 
-    valid_models = {k: v for k, v in model_fits.items() if v.get('success', False)}
+    valid_models = {k: v for k, v in model_fits.items() if v.get("success", False)}
 
     if not valid_models:
-        return {'best_model': 'none', 'model_fits': model_fits, 'weights': {}}
+        return {"best_model": "none", "model_fits": model_fits, "weights": {}}
 
     # Use BIC (stronger penalty for complexity) instead of AICc
-    best_model = min(valid_models.keys(), key=lambda k: valid_models[k]['bic'])
+    best_model = min(valid_models.keys(), key=lambda k: valid_models[k]["bic"])
 
-    min_bic = min(m['bic'] for m in valid_models.values())
-    delta_bic = {k: m['bic'] - min_bic for k, m in valid_models.items()}
+    min_bic = min(m["bic"] for m in valid_models.values())
+    delta_bic = {k: m["bic"] - min_bic for k, m in valid_models.items()}
     # BIC weights (similar to Akaike weights but for BIC)
     exp_terms = {k: np.exp(-0.5 * delta) for k, delta in delta_bic.items()}
     sum_exp = sum(exp_terms.values())
     weights = {k: exp_val / sum_exp for k, exp_val in exp_terms.items()}
 
-    return {
-        'best_model': best_model,
-        'model_fits': model_fits,
-        'weights': weights
-    }
+    return {"best_model": best_model, "model_fits": model_fits, "weights": weights}

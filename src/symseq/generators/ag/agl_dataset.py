@@ -7,19 +7,31 @@ agl_dataset.py
 This module contains functions for generating balanced AGL (Artificial Grammar Learning) datasets.
 """
 
+from __future__ import annotations
+
 from collections import defaultdict
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from multiprocessing import cpu_count
 
 import numpy as np
-import pandas as pd
 
-from symseq.grammars.ag.utils import all_paths_as_strings, process_feature
+from symseq.generators.ag.utils import all_paths_as_strings, process_feature
 
 # internal imports
 from symseq.utils.io import get_logger
 
 logger = get_logger(__name__)
+
+
+def _require_pandas():
+    try:
+        import pandas as pd
+    except ImportError as exc:
+        raise ImportError(
+            "pandas is required for balanced AGL dataset generation. "
+            "Install symseq with the analysis extra: pip install 'symseq[analysis]'."
+        ) from exc
+    return pd
 
 
 # TODO consider NSGA-II for multi-objective partitioning
@@ -73,6 +85,7 @@ def generate_balanced_agl(
     test_set : pd.DataFrame
         List of DataFrames with test set strings and features for each factor cell.
     """
+    pd = _require_pandas()
     assert length_range[1] <= 20, "Length range is too large, consider using a smaller range (<20) for now"
     n_proc = min(n_proc or cpu_count(), cpu_count())  # number of processes to use
     n_proc = 1
@@ -155,6 +168,7 @@ def _match_spec(df: pd.DataFrame, spec: dict) -> pd.Series:
     Values in spec can be a single value, an iterable of allowed values,
     or a callable that returns bool per row.
     """
+    pd = _require_pandas()
     mask = pd.Series(True, index=df.index)
     for col, wanted in spec.items():
         if callable(wanted):
@@ -181,6 +195,7 @@ def sample_for_specs(
     For each spec (factor->level dict), filter df and sample k items.
     Optional length-stratified proportional sampling within each spec.
     """
+    pd = _require_pandas()
     rng = np.random.default_rng(random_state)
     out = []
 
@@ -315,6 +330,7 @@ def _build_feature_constraints(factors):
 
 
 def assign_factor_levels(df, factors):
+    pd = _require_pandas()
     out = []
     for _, sub in df.groupby("grammaticality"):
         for factor, factor_specs in factors.items():
@@ -398,6 +414,7 @@ def _to_dataframe(G_strs, NG_strs, str_feature_map):
     pd.DataFrame
         The DataFrame with features for the test set.
     """
+    pd = _require_pandas()
     # build DAtaFrame with features for test set
     data_test = []
     concat_strings = list(zip(G_strs, [True] * len(G_strs))) + list(zip(NG_strs, [False] * len(NG_strs)))

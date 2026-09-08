@@ -9,16 +9,14 @@ import numpy as np
 
 try:
     from antropy import perm_entropy as antropy_perm_entropy
+
     ANTROPY_AVAILABLE = True
 except ImportError:
     ANTROPY_AVAILABLE = False
 
 
 def permutation_entropy(
-    sequence: list[str] | np.ndarray,
-    order: int = 3,
-    delay: int = 1,
-    normalize: bool = False
+    sequence: list[str] | np.ndarray, order: int = 3, delay: int = 1, normalize: bool = False
 ) -> float:
     """
     Compute permutation entropy (Bandt & Pompe, 2002).
@@ -101,6 +99,7 @@ def _custom_permutation_entropy(sequence, order, delay, normalize):
 
     if normalize:
         import math
+
         max_H = np.log2(math.factorial(order))
         H = H / max_H if max_H > 0 else 0.0
 

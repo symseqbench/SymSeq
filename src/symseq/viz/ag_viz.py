@@ -13,15 +13,21 @@ from __future__ import annotations
 
 import matplotlib
 import matplotlib.axes
-from sklearn.preprocessing import normalize
+import numpy as np
 
 from symseq.utils.io import get_logger
 
-# from symseq.grammars.ag import ArtificialGrammar
+# from symseq.generators.ag import ArtificialGrammar
 from symseq.utils.strtools import chunk_transitions
 from symseq.viz.mc_graph import MarkovChain, Node
 
 logger = get_logger(__name__)
+
+
+def _normalize_rows_l1(matrix):
+    matrix = np.asarray(matrix, dtype=float)
+    row_sums = matrix.sum(axis=1, keepdims=True)
+    return np.divide(matrix, row_sums, out=np.zeros_like(matrix, dtype=float), where=row_sums != 0)
 
 
 def draw_graph(g, max_lift=1, save="./last.png"):
@@ -30,8 +36,8 @@ def draw_graph(g, max_lift=1, save="./last.png"):
     mc.draw()
 
     for lift in range(max_lift):
-        frequencies = chunk_transitions(g.generate_sequence(), lift + 1, return_labels=True)
-        n_frequencies = normalize(frequencies, axis=1, norm="l1")
+        frequencies = chunk_transitions(g.generate_trial(), lift + 1, return_labels=True)
+        n_frequencies = _normalize_rows_l1(frequencies)
 
         mc = MarkovChain(n_frequencies, list(frequencies.columns), title=r"$P_{freq}$")
         label = save.split(".")[-2] + f"_lift{lift}" + save.split(".")[-1]
@@ -72,8 +78,8 @@ def plot_grammar(
         mc.draw(grammar.terminal_states, grammar.eos, ax=ax, save=save)
     else:
         raise NotImplementedError("Lifting not implemented yet")
-        frequencies = chunk_transitions(grammar.generate_sequence(), lift + 1, return_labels=True)
-        n_frequencies = normalize(frequencies, axis=1, norm="l1")
+        frequencies = chunk_transitions(grammar.generate_trial(), lift + 1, return_labels=True)
+        n_frequencies = _normalize_rows_l1(frequencies)
 
         mc = MarkovChain(n_frequencies, list(frequencies.columns), title=r"$P_{freq}$", fontsize=28, node_fontsize=32)
         mc.draw(grammar.terminal_states, ax=ax)

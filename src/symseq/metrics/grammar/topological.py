@@ -43,10 +43,10 @@ def topological_entropy(
 
     Raises
     ------
-    AssertionError
-        If method requirements are not met.
+    TypeError
+        If method-specific arguments have invalid types.
     ValueError
-        If method is not "lift" or "direct".
+        If method-specific arguments are invalid, or if method is not "lift" or "direct".
 
     Notes
     -----
@@ -73,7 +73,8 @@ def topological_entropy(
         logger.info(f"Computing topological entropy using the {method} method..")
 
     if method == "lift":
-        assert sequence is not None, "The lift method requires a sequence"
+        if sequence is None:
+            raise ValueError("The lift method requires a sequence")
         if len(sequence) <= 1000:
             logger.warning("Sequence is too short, entropy estimates may not be reliable.")
 
@@ -113,10 +114,12 @@ def topological_entropy(
         return lift, top_ent, TE
 
     elif method == "direct":
-        assert isinstance(transitions, np.ndarray), "Binary transition table is required for the direct method"
-        assert np.array_equal(
-            transitions, transitions.astype(bool)
-        ), "The direct method requires a binary transition table"
+        if not isinstance(transitions, np.ndarray):
+            raise TypeError("Binary transition table is required for the direct method")
+        if transitions.ndim != 2 or transitions.shape[0] != transitions.shape[1]:
+            raise ValueError("The direct method requires a square 2D transition table")
+        if not np.array_equal(transitions, transitions.astype(bool)):
+            raise ValueError("The direct method requires a binary transition table")
 
         eigenvalues = np.linalg.eigvals(transitions)
         max_eig = np.real(np.max(eigenvalues))

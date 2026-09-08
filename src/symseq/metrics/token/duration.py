@@ -56,7 +56,7 @@ def token_duration_stats(
 
     if durations is not None:
         if len(durations) != len(sequence):
-            raise ValueError(f"durations length ({len(durations)}) must match " f"sequence length ({len(sequence)})")
+            raise ValueError(f"durations length ({len(durations)}) must match sequence length ({len(sequence)})")
         duration_map = defaultdict(list)
         for token, dur in zip(sequence, durations):
             duration_map[token].append(dur)

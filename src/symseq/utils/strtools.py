@@ -1,11 +1,12 @@
 # SPDX-License-Identifier: MIT
 # Copyright (c) 2025-present, symseq Contributors
 
+from __future__ import annotations
+
 import copy
 from collections import Counter
 
 import numpy as np
-import pandas as pd
 
 from symseq.core.state import State
 
@@ -263,9 +264,9 @@ def chunk_transitions(
 
     """
     all_ngrams, unique_ngrams = chunk_ngrams_string(sequence, chunk_len)
-    assert (
-        len(np.unique([len(x) for x in unique_ngrams])) == 1
-    ), f"All unique n-grams must have the same length n={chunk_len}!"
+    assert len(np.unique([len(x) for x in unique_ngrams])) == 1, (
+        f"All unique n-grams must have the same length n={chunk_len}!"
+    )
     assert len(np.unique([len(x) for x in all_ngrams])) == 1, f"All n-grams must have the same length n={chunk_len}!"
 
     unique_ngrams = np.array(unique_ngrams)
@@ -293,11 +294,17 @@ def chunk_transitions(
     # 		M[ii, jj] = float(any(all_ngrams[np.where(all_ngrams[:-1] == ngram_i)[0] + 1] == ngram_j))
     # assert np.array_equal(M, Mfast_lin)
 
-    df = pd.DataFrame(Mfast_lin, columns=unique_ngrams, index=unique_ngrams)
-
-    if verbose:
-        print(df)
-
+    if verbose or as_dataframe:
+        try:
+            import pandas as pd
+        except ImportError as exc:
+            raise ImportError(
+                "pandas is required for chunk_transitions display/DataFrame output. "
+                "Install symseq with the analysis extra: pip install 'symseq[analysis]'."
+            ) from exc
+        df = pd.DataFrame(Mfast_lin, columns=unique_ngrams, index=unique_ngrams)
+        if verbose:
+            print(df)
     if as_dataframe:
         return df
     else:
