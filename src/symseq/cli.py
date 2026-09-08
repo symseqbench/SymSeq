@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import asdict, is_dataclass
 from pathlib import Path
 from typing import Any
@@ -21,10 +22,25 @@ from symseq.trial_set import TrialSet
 
 app = typer.Typer(no_args_is_help=True)
 
+_LOG_FORMAT = "[%(filename)s:%(lineno)d - %(levelname)s] %(message)s"
+
 
 def main() -> None:
     """Run the SymSeq command-line app."""
+    _configure_logging()
     app()
+
+
+def _configure_logging(level: int = logging.INFO) -> None:
+    """
+    Configure logging for the command-line process.
+
+    Parameters
+    ----------
+    level : int, optional
+        Logging level used when the root logger is not already configured.
+    """
+    logging.basicConfig(format=_LOG_FORMAT, level=level)
 
 
 @app.command()

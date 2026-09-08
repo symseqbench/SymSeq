@@ -17,6 +17,7 @@ import numpy as np
 from symseq.core.sequencer import SymbolicSequencer
 from symseq.generators.registry import register
 from symseq.trial import Target, Trial
+from symseq.utils.validation import is_integer
 
 Mode = Literal["stack", "uniform"]
 
@@ -129,7 +130,7 @@ class DyckGenerator(SymbolicSequencer):
         self.uniform_colorize = uniform_colorize
 
         # Validation
-        if not isinstance(k, int) or k < 1:
+        if not is_integer(k) or k < 1:
             raise ValueError("`k` must be a positive integer.")
 
         # Generate or use provided parentheses
@@ -172,13 +173,13 @@ class DyckGenerator(SymbolicSequencer):
             if not (0.0 < self.p_open < 0.5):
                 raise ValueError("In 'stack' mode, p_open must be in (0, 0.5).")
         elif self.mode == "uniform":
-            if not (isinstance(self.target_pairs, int) and self.target_pairs > 0):
+            if not (is_integer(self.target_pairs) and self.target_pairs > 0):
                 raise ValueError("In 'uniform' mode, target_pairs must be a positive integer.")
         else:
             raise ValueError("mode must be 'stack' or 'uniform'.")
 
         if self.max_depth is not None:
-            if not (isinstance(self.max_depth, int) and self.max_depth > 0):
+            if not (is_integer(self.max_depth) and self.max_depth > 0):
                 raise ValueError("`max_depth` must be a positive integer or None.")
 
         self._compute_alphabet()

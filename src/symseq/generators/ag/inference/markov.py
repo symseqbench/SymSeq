@@ -12,6 +12,7 @@ from typing import Literal
 import numpy as np
 
 from symseq.generators.ag.artificial_grammar import ArtificialGrammar
+from symseq.utils.validation import is_integer
 
 from ._compiler import compile_context_grammar
 from ._corpus import Context, ContextCounts, normalize_corpus
@@ -89,7 +90,7 @@ def infer_markov(
 
     bic_scores: dict[int, float] | None = None
     if order in {"bic", "auto"}:
-        if not isinstance(max_order, int) or isinstance(max_order, bool) or max_order < 0:
+        if not is_integer(max_order) or max_order < 0:
             raise ValueError("max_order must be a non-negative integer.")
         bic_scores = _bic_scores(
             corpus,
@@ -98,7 +99,7 @@ def infer_markov(
             eos=eos,
         )
         selected_order = min(bic_scores, key=bic_scores.__getitem__)
-    elif isinstance(order, int) and not isinstance(order, bool) and order >= 0:
+    elif is_integer(order) and order >= 0:
         selected_order = order
     else:
         raise ValueError("order must be a non-negative integer, 'bic', or 'auto'.")

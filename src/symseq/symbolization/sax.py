@@ -15,6 +15,8 @@ from typing import cast
 
 import numpy as np
 
+from symseq.utils.validation import is_integer
+
 _SAXPY_ALPHABET = "abcdefghijklmnopqrstuvwxyz"
 _DEFAULT_SYMBOLS = tuple("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
 
@@ -75,9 +77,9 @@ def sax_symbolize(
     Lin, J., Keogh, E., Lonardi, S., & Chiu, B. (2003). A symbolic
     representation of time series, with implications for streaming algorithms.
     """
-    if not isinstance(paa_size, int) or isinstance(paa_size, bool) or paa_size < 1:
+    if not is_integer(paa_size) or paa_size < 1:
         raise ValueError("paa_size must be a positive integer.")
-    if not isinstance(alphabet_size, int) or isinstance(alphabet_size, bool) or alphabet_size < 2:
+    if not is_integer(alphabet_size) or alphabet_size < 2:
         raise ValueError("alphabet_size must be an integer of at least 2.")
     if znorm_threshold < 0:
         raise ValueError("znorm_threshold must be non-negative.")

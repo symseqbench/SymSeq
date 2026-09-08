@@ -4,11 +4,14 @@
 """Top-level package for symseq."""
 
 import importlib
+import logging
 from typing import TYPE_CHECKING
 
-from .trial import Trial, Target
+from .trial import Target, Trial
 from .trial_set import TrialSet
 from .trial_source import TrialSource
+
+logging.getLogger(__name__).addHandler(logging.NullHandler())
 
 if TYPE_CHECKING:
     from . import generators, tasks

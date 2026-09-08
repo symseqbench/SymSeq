@@ -12,10 +12,11 @@ from __future__ import annotations
 
 import copy
 import logging
-import random
 import warnings
 from collections.abc import Mapping, Sequence
 from concurrent.futures import ProcessPoolExecutor, as_completed
+from contextlib import nullcontext
+from math import ceil, floor
 from multiprocessing import cpu_count
 from typing import ClassVar
 
@@ -35,8 +36,24 @@ from symseq.generators.registry import register
 from symseq.trial import Target, Trial
 from symseq.utils.io import get_logger, save_pickle
 from symseq.utils.strtools import string_as_symbols
+from symseq.utils.validation import (
+    validate_boolean,
+    validate_integer,
+    validate_length_bounds,
+    validate_unit_fraction,
+)
 
 logger = get_logger(__name__)
+
+_WORKER_CHUNK_SIZE = 512
+_UINT64_HIGH = np.iinfo(np.uint64).max
+
+
+def _worker_count(value: object) -> int:
+    """Resolve a requested process count against the available CPUs."""
+    available = cpu_count()
+    requested = available if value is None else validate_integer(value, "n_proc", minimum=1)
+    return min(requested, available)
 
 
 def _require_pandas():
@@ -841,22 +858,10 @@ class ArtificialGrammar(SymbolicSequencer):
         RuntimeError
             If a grammatical string satisfying the length constraints cannot be generated after `max_iter` attempts.
         """
-        if length_range is not None:
-            if not isinstance(length_range, (list, tuple)) or len(length_range) != 2:
-                raise ValueError("Length range must contain exactly two integers.")
-            min_length, max_length = length_range
-
-        length_bounds = (min_length, max_length)
-        if not all(isinstance(bound, (int, np.integer)) and not isinstance(bound, bool) for bound in length_bounds):
-            raise ValueError("Length bounds must be integers.")
-        min_length, max_length = (int(bound) for bound in length_bounds)
-        if min_length < 0 or max_length < 0:
-            raise ValueError("Length bounds must be non-negative integers.")
-        if min_length > max_length:
-            raise ValueError("Minimum length cannot exceed maximum length.")
-        if not isinstance(max_iter, (int, np.integer)) or isinstance(max_iter, bool) or max_iter < 1:
-            raise ValueError("max_iter must be a positive integer.")
-        max_iter = int(max_iter)
+        min_length, max_length = validate_length_bounds(min_length, max_length, length_range)
+        max_iter = validate_integer(max_iter, "max_iter", minimum=1)
+        remove_eos = validate_boolean(remove_eos, "remove_eos")
+        as_states = validate_boolean(as_states, "as_states")
 
         valid = False
         string = []
@@ -909,7 +914,7 @@ class ArtificialGrammar(SymbolicSequencer):
         bool
             True if the string is in the symbol format, False otherwise.
         """
-        return np.all([s in self.alphabet for s in string])
+        return all(symbol == self.eos or symbol in self.alphabet for symbol in string)
 
     def add_deviant(
         self,
@@ -917,8 +922,8 @@ class ArtificialGrammar(SymbolicSequencer):
         n_deviants: int = 1,
         max_iter: int = int(1e4),
         remove_eos: bool = True,
-        verbose=False,
-    ):
+        verbose: bool = False,
+    ) -> list[str]:
         """
         Make a string non-grammatical by introducing one or more deviants (errors) at random positions.
 
@@ -944,71 +949,60 @@ class ArtificialGrammar(SymbolicSequencer):
         Raises
         ------
         ValueError
-            If the string has fewer than 2 symbols, if the number of deviants is smaller than 1, or if the number of
-            deviants exceeds the number of available positions.
+            If the input or generation arguments are invalid, there are too few
+            positions, or the grammar contains no alternative emitted symbol.
         RuntimeError
-            If there are no available positions to introduce deviants, or if the string could not be made
-            non-grammatical within `max_iter` tries.
+            If no corruption is nongrammatical at both the state and emitted-symbol
+            levels within ``max_iter`` attempts.
         """
-        # sanity checks
-        if len(string) < 2:
-            raise ValueError("String must have at least 2 symbols to check transitions.")
+        del verbose
+        if not isinstance(string, Sequence) or isinstance(string, (str, bytes)):
+            raise TypeError("string must be a sequence of state or symbol strings.")
+        if not all(isinstance(token, str) for token in string):
+            raise TypeError("string must contain only strings.")
 
-        if n_deviants < 1:
-            raise ValueError("Number of deviants must be greater than 0.")
+        n_deviants = validate_integer(n_deviants, "n_deviants", minimum=1)
+        max_iter = validate_integer(max_iter, "max_iter", minimum=1)
+        remove_eos = validate_boolean(remove_eos, "remove_eos")
+        reference = list(string)
+        if self.eos in reference[:-1]:
+            raise ValueError("EOS may appear only at the end of a string.")
+        if not reference or reference[-1] != self.eos:
+            reference.append(self.eos)
 
-        found_ng = False  # flag for finding non-grammatical string
-        ref_string = copy.deepcopy(string)  # reference copy of the deviant string at the symbol level
+        positions = list(range(len(reference) - 1))
+        if not positions:
+            raise ValueError("At least one non-EOS symbol is required to introduce a deviant.")
+        if n_deviants > len(positions):
+            raise ValueError("n_deviants exceeds the number of non-EOS positions.")
 
-        inp_as_symbols = self._is_symbol_format(string)
-        if inp_as_symbols:
-            deviant_elem_set = set(self.alphabet)  # symbol level, no indexed states
+        symbol_input = self._is_symbol_format(reference)
+        if symbol_input:
+            deviant_elements = sorted(self.alphabet)
         else:
-            deviant_elem_set = [s.tostring() for s in self.states if s != self.eos]  # state level with indices
+            deviant_elements = sorted(state.tostring() for state in self.states if state != self.eos)
+        if len({State.from_string(element).symbol for element in deviant_elements}) < 2:
+            raise ValueError("At least two distinct emitted symbols are required to introduce a deviant.")
 
-        # for consistency, add eos to the end of the deviant string. May be removed at the end
-        if ref_string[-1] != self.eos:
-            ref_string.append(self.eos)
+        for _ in range(max_iter):
+            candidate = reference.copy()
+            selected = self.rng.choice(positions, size=n_deviants, replace=False)
+            for raw_position in np.atleast_1d(selected):
+                position = int(raw_position)
+                current_symbol = State.from_string(reference[position]).symbol
+                alternatives = [
+                    element for element in deviant_elements if State.from_string(element).symbol != current_symbol
+                ]
+                candidate[position] = str(self.rng.choice(alternatives))
 
-        length = len(ref_string)
-        candidate_pos = list(range(length - 1))
+            symbols = string_as_symbols(candidate)
+            state_grammatical = self.is_grammatical(candidate) if not symbol_input else False
+            if not state_grammatical and not self.is_grammatical(symbols):
+                if remove_eos:
+                    candidate.pop()
+                return candidate
 
-        if not candidate_pos:
-            raise RuntimeError("No available positions to introduce deviants.")
-        if n_deviants > len(candidate_pos):
-            raise ValueError("Number of deviants exceeds the number of available positions.")
-
-        tmp_max_tries = max_iter
-        nongramm_string = []
-        while max_iter > 0 and not found_ng:
-            found_ng = True
-            nongramm_string = copy.deepcopy(ref_string)  # always start with the original/reference string
-            # Randomly choose positions for deviants
-            deviant_pos = self.rng.choice(candidate_pos, size=n_deviants, replace=False)
-
-            for pos in deviant_pos:
-                curr_symbol = State.from_string(ref_string[pos]).symbol
-                # list of possible deviant symbols chosen deterministically
-                possible_deviants = sorted(
-                    [elem for elem in deviant_elem_set if State.from_string(elem).symbol != curr_symbol]
-                )
-                deviant = str(self.rng.choice(possible_deviants))
-                nongramm_string[pos] = deviant
-
-                # break loop if the new string is grammatical
-                if self.is_grammatical(nongramm_string):
-                    found_ng = False
-                    # At least one position could not be filled, so restart the loop
-                    max_iter -= 1
-                    break
-
-        if not found_ng:
-            raise RuntimeError(f"Could not make string {string} non-grammatical in {tmp_max_tries} tries!")
-
-        if remove_eos:
-            nongramm_string.remove(self.eos)
-
-        return nongramm_string
+        raise RuntimeError(f"Could not make string {list(string)} non-grammatical in {max_iter} tries.")
 
     def is_grammatical(self, string: Sequence[str | State]) -> bool:
         """Check whether the grammar accepts a complete symbol or state sequence.
@@ -1121,10 +1115,17 @@ class ArtificialGrammar(SymbolicSequencer):
             If a grammatical string satisfying the constraints is not found after `max_iter` attempts, or if it
             cannot be made non-grammatical.
         """
+        n_deviants = validate_integer(n_deviants, "n_deviants", minimum=1)
+        max_iter = validate_integer(max_iter, "max_iter", minimum=1)
+        remove_eos = validate_boolean(remove_eos, "remove_eos")
+        as_states = validate_boolean(as_states, "as_states")
+        minimum, maximum = validate_length_bounds(min_length, max_length, length_range)
+        if n_deviants > maximum:
+            raise ValueError("n_deviants cannot exceed the maximum generated string length.")
+        minimum = max(minimum, n_deviants)
+
         string = self.generate_string(
-            min_length=min_length,
-            max_length=max_length,
-            length_range=length_range,
+            length_range=(minimum, maximum),
             remove_eos=remove_eos,
             as_states=as_states,
             max_iter=max_iter,
@@ -1133,6 +1134,7 @@ class ArtificialGrammar(SymbolicSequencer):
         nongramm_string = self.add_deviant(
             string,
             n_deviants=n_deviants,
+            max_iter=max_iter,
             remove_eos=remove_eos,
         )
 
@@ -1140,6 +1142,211 @@ class ArtificialGrammar(SymbolicSequencer):
             nongramm_string = string_as_symbols(nongramm_string)
 
         return nongramm_string
+
+    def _generate_candidate_window(
+        self,
+        count: int,
+        *,
+        grammatical: bool,
+        generation_kwargs: dict,
+        executor: ProcessPoolExecutor | None,
+    ) -> list[list[str]]:
+        """Generate a deterministic logical window from parent-provided entropy."""
+        seeds = self.rng.integers(0, _UINT64_HIGH, size=count, dtype=np.uint64)
+        tasks = [
+            (
+                self,
+                grammatical,
+                generation_kwargs,
+                [int(seed) for seed in seeds[start : start + _WORKER_CHUNK_SIZE]],
+            )
+            for start in range(0, count, _WORKER_CHUNK_SIZE)
+        ]
+        map_chunks = map if executor is None else executor.map
+        chunks = map_chunks(_generate_string_worker, tasks)
+        return [string for chunk in chunks for string in chunk]
+
+    def _collect_candidate_subset(
+        self,
+        target: int,
+        *,
+        grammatical: bool,
+        replace: bool,
+        max_candidates: int,
+        uniqueness_by_symbols: bool,
+        generation_kwargs: dict,
+        executor: ProcessPoolExecutor | None,
+    ) -> list[list[str]]:
+        """Collect one grammaticality subset with adaptive unique sampling."""
+        if target == 0:
+            return []
+        if replace:
+            return self._generate_candidate_window(
+                target,
+                grammatical=grammatical,
+                generation_kwargs=generation_kwargs,
+                executor=executor,
+            )
+
+        strings: list[list[str]] = []
+        seen: set[tuple[str, ...]] = set()
+        attempts = 0
+        window = target
+        while len(strings) < target and attempts < max_candidates:
+            window = min(window, max_candidates - attempts)
+            candidates = self._generate_candidate_window(
+                window,
+                grammatical=grammatical,
+                generation_kwargs=generation_kwargs,
+                executor=executor,
+            )
+            attempts += len(candidates)
+            accepted_before = len(strings)
+            for candidate in candidates:
+                key_symbols = string_as_symbols(candidate) if uniqueness_by_symbols else candidate
+                key = tuple(key_symbols)
+                if key in seen:
+                    continue
+                seen.add(key)
+                strings.append(candidate)
+                if len(strings) == target:
+                    break
+
+            remaining = target - len(strings)
+            if remaining == 0:
+                break
+            acceptance_rate = (len(strings) - accepted_before) / len(candidates)
+            estimated = ceil(remaining / acceptance_rate) if acceptance_rate > 0.0 else 4 * remaining
+            window = min(max(remaining, estimated), 4 * remaining)
+
+        return strings
+
+    @staticmethod
+    def _largest_labeled_batch_size(
+        requested: int,
+        fraction: float,
+        n_grammatical: int,
+        n_violations: int,
+    ) -> int:
+        """Find the largest feasible partial batch preserving floor-rounded labels."""
+        low = 0
+        high = requested
+        while low < high:
+            candidate = (low + high + 1) // 2
+            required_violations = floor(fraction * candidate)
+            required_grammatical = candidate - required_violations
+            if required_grammatical <= n_grammatical and required_violations <= n_violations:
+                low = candidate
+            else:
+                high = candidate - 1
+        return low
+
+    def _generate_labeled_batch(
+        self,
+        n_samples: int,
+        *,
+        min_length: int,
+        max_length: int,
+        length_range: tuple[int, int] | list[int] | None,
+        frac_violations: float,
+        n_deviants: int,
+        replace: bool,
+        strict: bool,
+        remove_eos: bool,
+        as_states: bool,
+        max_iter: int,
+        n_proc: int | None,
+        max_candidates: int | None,
+        uniqueness_by_symbols: bool,
+    ) -> tuple[list[list[str]], list[bool]]:
+        """Generate a validated, reproducible batch with aligned labels."""
+        count = validate_integer(n_samples, "n_samples", minimum=0)
+        fraction = validate_unit_fraction(frac_violations, "frac_violations")
+        n_deviants = validate_integer(n_deviants, "n_deviants", minimum=1)
+        replace = validate_boolean(replace, "replace")
+        strict = validate_boolean(strict, "strict")
+        remove_eos = validate_boolean(remove_eos, "remove_eos")
+        as_states = validate_boolean(as_states, "as_states")
+        max_iter = validate_integer(max_iter, "max_iter", minimum=1)
+        minimum, maximum = validate_length_bounds(min_length, max_length, length_range)
+
+        workers = _worker_count(n_proc)
+
+        if max_candidates is None:
+            candidate_limit = max(10 * count, 1000)
+        else:
+            candidate_limit = validate_integer(max_candidates, "max_candidates", minimum=1)
+            if candidate_limit < count:
+                raise ValueError("max_candidates must be at least n_samples.")
+
+        if count == 0:
+            return [], []
+
+        n_violations = floor(fraction * count)
+        n_grammatical = count - n_violations
+        generation_kwargs = {
+            "length_range": (minimum, maximum),
+            "remove_eos": remove_eos,
+            "as_states": as_states,
+            "max_iter": max_iter,
+        }
+        logger.info(
+            "Generating %d strings (%d grammatical, %d violations).",
+            count,
+            n_grammatical,
+            n_violations,
+        )
+
+        executor_context = nullcontext(None) if workers == 1 else ProcessPoolExecutor(max_workers=workers)
+        with executor_context as executor:
+            grammatical = self._collect_candidate_subset(
+                n_grammatical,
+                grammatical=True,
+                replace=replace,
+                max_candidates=candidate_limit,
+                uniqueness_by_symbols=uniqueness_by_symbols,
+                generation_kwargs=generation_kwargs,
+                executor=executor,
+            )
+            violation_kwargs = {**generation_kwargs, "n_deviants": n_deviants}
+            violations = self._collect_candidate_subset(
+                n_violations,
+                grammatical=False,
+                replace=replace,
+                max_candidates=candidate_limit,
+                uniqueness_by_symbols=uniqueness_by_symbols,
+                generation_kwargs=violation_kwargs,
+                executor=executor,
+            )
+
+        if replace or (len(grammatical) == n_grammatical and len(violations) == n_violations):
+            actual = count
+        elif strict:
+            raise RuntimeError(
+                "Could not generate the requested unique batch within max_candidates: "
+                f"{len(grammatical)}/{n_grammatical} grammatical and "
+                f"{len(violations)}/{n_violations} violations."
+            )
+        else:
+            actual = self._largest_labeled_batch_size(
+                count,
+                fraction,
+                len(grammatical),
+                len(violations),
+            )
+            actual_violations = floor(fraction * actual)
+            actual_grammatical = actual - actual_violations
+            grammatical = grammatical[:actual_grammatical]
+            violations = violations[:actual_violations]
+            message = f"Generated {actual}/{count} unique strings within max_candidates."
+            logger.warning(message)
+            warnings.warn(message, UserWarning, stacklevel=3)
+
+        combined = [(string, True) for string in grammatical] + [(string, False) for string in violations]
+        order = self.rng.permutation(actual)
+        strings = [combined[int(index)][0] for index in order]
+        labels = [combined[int(index)][1] for index in order]
+        return strings, labels
 
     # ============================ Trial-based API ============================
 
@@ -1187,6 +1394,7 @@ class ArtificialGrammar(SymbolicSequencer):
             - ``Trial.intrinsic_targets["grammaticality"]``: per-trial bool — True for samples drawn from the
               grammar, False for corrupted samples.
         """
+        grammatical = validate_boolean(grammatical, "grammatical")
         if grammatical:
             states = self.generate_string(
                 min_length=min_length,
@@ -1209,10 +1417,13 @@ class ArtificialGrammar(SymbolicSequencer):
             )
             is_gram = False
 
-        symbols = string_as_symbols(states)
+        return self._trial_from_states(states, is_gram)
 
+    def _trial_from_states(self, states: list[str], grammatical: bool) -> Trial:
+        """Construct a Trial from a state sequence and its grammaticality."""
+        symbols = string_as_symbols(states)
         intrinsic_targets = {
-            "grammaticality": Target(values=is_gram, mask=None, granularity="per_trial"),
+            "grammaticality": Target(values=grammatical, mask=None, granularity="per_trial"),
         }
         meta = {
             "paradigm": "ArtificialGrammar",
@@ -1227,170 +1438,153 @@ class ArtificialGrammar(SymbolicSequencer):
             intrinsic_targets=intrinsic_targets,
         )
 
+    def generate_trials(
+        self,
+        n: int,
+        min_length: int = 0,
+        max_length: int = int(1e4),
+        length_range: tuple[int, int] | list[int] | None = None,
+        remove_eos: bool = True,
+        frac_violations: float = 0.0,
+        n_deviants: int = 1,
+        replace: bool = True,
+        strict: bool = True,
+        max_iter: int = int(1e3),
+        n_proc: int | None = 1,
+        max_candidates: int | None = None,
+    ) -> list[Trial]:
+        """
+        Generate a labeled batch of artificial-grammar Trials.
+
+        Parameters
+        ----------
+        n : int
+            Number of Trials requested.
+        min_length : int, optional
+            Minimum sequence length excluding EOS. Defaults to 0.
+        max_length : int, optional
+            Maximum sequence length excluding EOS. Defaults to 1e4.
+        length_range : tuple of int or list of int, optional
+            Pair overriding ``min_length`` and ``max_length``. Defaults to None.
+        remove_eos : bool, optional
+            Whether to remove the terminal EOS marker. Defaults to True.
+        frac_violations : float, optional
+            Fraction of returned Trials made nongrammatical, rounded down. Defaults to 0.0.
+        n_deviants : int, optional
+            Number of distinct positions changed in each violation. Defaults to 1.
+        replace : bool, optional
+            Whether returned symbol sequences may repeat. Defaults to True.
+        strict : bool, optional
+            Whether an unfilled unique request raises rather than returning a labeled partial batch. Defaults to True.
+        max_iter : int, optional
+            Per-candidate generation and corruption attempt limit. Defaults to 1e3.
+        n_proc : int or None, optional
+            Worker-process count. None uses all available CPUs. Defaults to 1.
+        max_candidates : int or None, optional
+            Per-subset candidate limit for unique sampling. The default is
+            ``max(10 * n, 1000)``.
+
+        Returns
+        -------
+        list of Trial
+            Generated Trials with aligned intrinsic grammaticality targets.
+        """
+        states, labels = self._generate_labeled_batch(
+            n,
+            min_length=min_length,
+            max_length=max_length,
+            length_range=length_range,
+            frac_violations=frac_violations,
+            n_deviants=n_deviants,
+            replace=replace,
+            strict=strict,
+            remove_eos=remove_eos,
+            as_states=True,
+            max_iter=max_iter,
+            n_proc=n_proc,
+            max_candidates=max_candidates,
+            uniqueness_by_symbols=True,
+        )
+        return [
+            self._trial_from_states(state_sequence, grammatical)
+            for state_sequence, grammatical in zip(states, labels, strict=True)
+        ]
+
     def generate_string_set(
         self,
-        n_samples,
-        length_range=(1, 1000),
-        nongramm_fraction=0.0,
+        n_samples: int,
+        length_range: tuple[int, int] | list[int] = (1, 1000),
+        frac_violations: float = 0.0,
         n_deviants: int = 1,
-        allow_repetitions: bool = True,
+        replace: bool = True,
+        strict: bool = True,
         remove_eos: bool = True,
         as_states: bool = False,
-        max_iter=int(1e4),
-        n_proc=1,
-        oversample_factor=1.0,
+        max_iter: int = int(1e4),
+        n_proc: int | None = 1,
+        max_candidates: int | None = None,
     ) -> tuple[list[list[str]], list[bool]]:
         """
-        Generates a total of `n_samples` strings, a fraction `nongramm_fraction` of which are non-grammatical.
-        Each string is generated randomly according to the grammar. Non-grammatical strings are created by generating
-        a grammatical string and then introducing one or more deviants (errors).
+        Generate a labeled batch of grammatical and violated strings.
 
         Parameters
         ----------
         n_samples : int
-            Total number of strings to generate.
-        length_range : tuple of int, optional
-            String length, specified as the interval (min_len, max_len). Defaults to (1, 1000).
-        nongramm_fraction : float, optional
-            Fraction of non-grammatical items to be introduced in the dataset. Defaults to 0.0.
+            Number of strings requested.
+        length_range : tuple of int or list of int, optional
+            Inclusive sequence-length bounds excluding EOS. Defaults to (1, 1000).
+        frac_violations : float, optional
+            Fraction of returned strings made nongrammatical, rounded down. Defaults to 0.0.
         n_deviants : int, optional
-            Number of deviants to introduce if non-grammatical strings are generated. Defaults to 1.
-        allow_repetitions : bool, optional
-            Allow repetitions of the same string(s) in the generated set. If False, the function may not be able to
-            generate a sufficient number of unique strings, in which case it warns and returns fewer. Defaults to True.
+            Number of distinct positions changed in each violation. Defaults to 1.
+        replace : bool, optional
+            Whether returned strings may repeat. Defaults to True.
+        strict : bool, optional
+            Whether an unfilled unique request raises rather than returning a labeled partial batch. Defaults to True.
         remove_eos : bool, optional
-            If True, remove eos (e.g., '#') markers from the strings. Defaults to True.
+            Whether to remove the terminal EOS marker. Defaults to True.
         as_states : bool, optional
-            If True, keep the state indices (e.g., A1) instead of returning bare symbols (e.g., A). Defaults to False.
+            Whether to return indexed states rather than bare symbols. Defaults to False.
         max_iter : int, optional
-            Maximum attempts to generate a (grammatical or non-grammatical) string. Defaults to 1e4.
-        n_proc : int, optional
-            Number of processes to use for parallelization. If None or larger than the number of available CPUs, all
-            CPUs are used. Defaults to 1.
-        oversample_factor : float, optional
-            Factor to oversample the generated strings, after which the correct number of samples is selected. A value
-            > 1.0 can be useful if unique strings are desired (`allow_repetitions=False`) and many collisions are
-            expected during random sampling. Defaults to 1.0.
+            Per-candidate generation and corruption attempt limit. Defaults to 1e4.
+        n_proc : int or None, optional
+            Worker-process count. None uses all available CPUs. Defaults to 1.
+        max_candidates : int or None, optional
+            Per-subset candidate limit for unique sampling. The default is
+            ``max(10 * n_samples, 1000)``.
 
         Returns
         -------
-        string_set : list of list of str
-            The grammatical (and possibly non-grammatical) strings generated, randomly shuffled.
-        grammaticality : list of bool
-            Whether each string in `string_set` is grammatical or not.
+        tuple of list of list of str and list of bool
+            Generated strings and aligned grammaticality labels.
 
         Warns
         -----
         UserWarning
-            If string repetitions are not allowed and a sufficient number of unique strings could not be generated.
+            If ``replace=False`` and ``strict=False`` return a partial batch.
+
+        Raises
+        ------
+        RuntimeError
+            If strict unique sampling cannot fill the requested batch within
+            ``max_candidates``.
         """
-
-        def _generate_subset(n_target, worker_type, extra_kwargs=None):
-            """
-            Generate either grammatical or non-grammatical string subsets in a parallelized manner.
-
-            Parameters
-            ----------
-            n_target : int
-                Number of strings to generate.
-            worker_type : str
-                Name of the generation method to call, either "generate_string" or "generate_nongrammatical_string".
-            extra_kwargs : dict, optional
-                Additional keyword arguments forwarded to the generation method. Defaults to None.
-
-            Returns
-            -------
-            list of list of str
-                The generated strings, truncated to at most `n_target` items.
-            """
-            subset_strings = []
-            subset_unique = set()
-            attempts = 0
-
-            while len(subset_strings) < n_target:
-                total = int(n_target * oversample_factor)
-                per_worker = int(np.ceil(total / n_proc))
-
-                gen_kwargs = {
-                    "min_length": length_range[0],
-                    "max_length": length_range[1],
-                    "length_range": length_range,
-                    "remove_eos": remove_eos,
-                    "as_states": as_states,
-                    "max_iter": max_iter,
-                }
-                if extra_kwargs:
-                    gen_kwargs.update(extra_kwargs)
-
-                # Master seed sequence for reproducibility
-                master_ss = np.random.SeedSequence(self.rng.integers(1, 1000))
-                child_seqs = master_ss.spawn(n_proc)
-
-                # Generate strings in parallel
-                results = []
-                with ProcessPoolExecutor(max_workers=n_proc) as pool:
-                    futures = [
-                        pool.submit(
-                            _generate_string_worker,
-                            (self, worker_type, gen_kwargs, per_worker, child_seqs[i]),
-                        )
-                        for i in range(n_proc)
-                    ]
-                    for f in as_completed(futures):
-                        results.extend(f.result())
-
-                # Handle repetitions / uniqueness
-                if allow_repetitions:
-                    subset_strings.extend(results)
-                else:
-                    for r in results:
-                        r_tuple = tuple(r)  # convert list to hashable tuple
-                        if r_tuple not in subset_unique:
-                            subset_strings.append(r)
-                            subset_unique.add(r_tuple)
-
-                attempts += 1
-                if attempts > max_iter:
-                    break
-
-            if len(subset_strings) < n_target:
-                logger.warning(f"Only {len(subset_strings)}/{n_target} {worker_type} strings generated")
-                warnings.warn(f"Could not generate all {worker_type} strings", UserWarning, stacklevel=2)
-            # truncate to desired number of strings
-            if len(subset_strings) > n_target:
-                subset_strings = subset_strings[:n_target]
-
-            return subset_strings
-
-        # Determine counts
-        n_gramm_strings = np.rint((1 - nongramm_fraction) * n_samples).astype(int)
-        n_nongramm_strings = np.rint(nongramm_fraction * n_samples).astype(int)
-        logger.info(
-            f"Generating {n_samples} ({n_gramm_strings} grammatical, {n_nongramm_strings} non-grammatical) strings..."
+        return self._generate_labeled_batch(
+            n_samples,
+            min_length=0,
+            max_length=int(1e4),
+            length_range=length_range,
+            frac_violations=frac_violations,
+            n_deviants=n_deviants,
+            replace=replace,
+            strict=strict,
+            remove_eos=remove_eos,
+            as_states=as_states,
+            max_iter=max_iter,
+            n_proc=n_proc,
+            max_candidates=max_candidates,
+            uniqueness_by_symbols=False,
         )
-
-        # select correct number of cpus for parallelization
-        if n_proc is None or n_proc > cpu_count():
-            n_proc = cpu_count()
-
-        # generate sets
-        gramm_string_set = _generate_subset(n_gramm_strings, "generate_string")
-        nongramm_string_set = _generate_subset(
-            n_nongramm_strings,
-            "generate_nongrammatical_string",
-            extra_kwargs={"n_deviants": n_deviants},
-        )
-
-        # combine grammaticality flags
-        string_set = gramm_string_set + nongramm_string_set
-        grammaticality = [True] * len(gramm_string_set) + [False] * len(nongramm_string_set)
-
-        # deterministic shuffle
-        combined = list(zip(string_set, grammaticality, strict=True))
-        random.Random(42).shuffle(combined)
-        string_set[:], grammaticality[:] = zip(*combined, strict=True)
-
-        return string_set, grammaticality
 
     def generate_balanced_agl(self, **kwargs):
         """
@@ -1563,35 +1757,32 @@ class ArtificialGrammar(SymbolicSequencer):
 
 def _generate_string_worker(args):
     """
-    Generate a batch of strings in a worker process, using an independently seeded generator.
+    Generate one deterministic chunk from parent-provided candidate entropy.
 
     Parameters
     ----------
     args : tuple
-        Tuple of (grammar, gen_func, gen_kwargs, n_samples, child_ss), where `grammar` is the ArtificialGrammar to
-        sample from, `gen_func` is the name of the generation method to call ("generate_string" or
-        "generate_nongrammatical_string"), `gen_kwargs` are the keyword arguments forwarded to it, `n_samples` is
-        the number of strings to generate, and `child_ss` is the numpy.random.SeedSequence seeding this worker.
+        Grammar, grammaticality flag, generation arguments, and ordered candidate
+        seeds.
 
     Returns
     -------
     list of list of str
         The generated strings.
 
-    Raises
-    ------
-    ValueError
-        If `gen_func` does not name a known generation method.
-
     Notes
     -----
-    The grammar is passed by value (pickled) to each worker, so reseeding its `rng` does not affect the parent.
+    A shallow grammar copy keeps the sequential fast path from mutating the parent
+    RNG. Process workers already receive a pickled copy, but use the same logic so
+    results do not depend on the worker count.
     """
-    self_obj, gen_func, gen_kwargs, n_samples, child_ss = args
-    self_obj.rng = np.random.default_rng(child_ss)
-    if gen_func == "generate_string":
-        return [self_obj.generate_string(**gen_kwargs) for _ in range(n_samples)]
-    elif gen_func == "generate_nongrammatical_string":
-        return [self_obj.generate_nongrammatical_string(**gen_kwargs) for _ in range(n_samples)]
-    else:
-        raise ValueError(f"Unknown generation function {gen_func}")
+    grammar, grammatical, generation_kwargs, seeds = args
+    worker_grammar = copy.copy(grammar)
+    strings = []
+    worker_grammar.rng = np.random.default_rng(np.random.SeedSequence(seeds))
+    for _ in seeds:
+        if grammatical:
+            strings.append(worker_grammar.generate_string(**generation_kwargs))
+        else:
+            strings.append(worker_grammar.generate_nongrammatical_string(**generation_kwargs))
+    return strings
