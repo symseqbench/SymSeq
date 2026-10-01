@@ -12,7 +12,21 @@ from scipy import optimize, special
 from tqdm import tqdm
 
 
-def grassberger_entropy(sequence: list[str]) -> float:
+# Convergence floor for the MI decay analyses, defined in nats. It is scaled to the
+# requested units so that both units yield the same convergence distances.
+_CONVERGENCE_FLOOR_NATS = 0.005
+
+
+def _nats_to_units_factor(units: str) -> float:
+    """Return the factor converting a value in nats to `units`."""
+    if units == "nats":
+        return 1.0
+    if units == "bits":
+        return 1.0 / np.log(2)
+    raise ValueError(f"Unknown units {units!r}. Use 'nats' or 'bits'.")
+
+
+def grassberger_entropy(sequence: list[str], units: str = "nats") -> float:
     """
     Calculate entropy using Grassberger correction for finite samples.
 
@@ -20,22 +34,32 @@ def grassberger_entropy(sequence: list[str]) -> float:
     ----------
     sequence : list of str
         Symbolic sequence.
+    units : {"nats", "bits"}, default="nats"
+        Unit of the returned entropy.
 
     Returns
     -------
     float
-        Grassberger-corrected entropy in bits.
+        Grassberger-corrected entropy in the requested units.
+
+    Raises
+    ------
+    ValueError
+        If `units` is not "nats" or "bits".
 
     Notes
     -----
-    H_hat = log2(N) - (1/N) * sum(n_i * psi(n_i))
-    where psi is the digamma function.
+    H_hat = ln(N) - (1/N) * sum(n_i * psi(n_i))   [nats]
+    where psi is the digamma function. The estimator is natively expressed in
+    nats; for ``units="bits"`` the result is divided by ln(2).
 
     References
     ----------
     Grassberger, P. (1988). Finite sample corrections to entropy and
     dimension estimates. Physics Letters A, 128(6-7), 369-373.
     """
+    factor = _nats_to_units_factor(units)
+
     if not sequence:
         return 0.0
 
@@ -45,10 +69,10 @@ def grassberger_entropy(sequence: list[str]) -> float:
     if len(counts) == 0 or n_total == 0:
         return 0.0
 
-    log_n = np.log2(n_total)
+    log_n = np.log(n_total)
     correction = np.sum(counts * special.digamma(counts)) / n_total
 
-    return log_n - correction
+    return float((log_n - correction) * factor)
 
 
 def mi_decay_analysis(
@@ -58,6 +82,7 @@ def mi_decay_analysis(
     confidence_level: float = 0.95,
     random_state: int | None = None,
     verbose: bool = False,
+    units: str = "nats",
 ) -> dict:
     """
     Analyze hierarchical structure via mutual information decay.
@@ -73,14 +98,22 @@ def mi_decay_analysis(
     confidence_level : float, default=0.95
         Confidence level for significance testing.
     random_state : int, optional
-        Random seed for reproducibility.
+        Random seed for reproducibility. Results are identical to
+        `mi_decay_analysis_parallel` for the same seed, and the global NumPy random
+        state is left untouched.
     verbose : bool, default=False
         If True, display progress bars and intermediate information.
+    units : {"nats", "bits"}, default="nats"
+        Unit of all MI quantities (``mi_values``, ``mi_adjusted``,
+        ``mi_baseline``, ``mi_ci_*``). The convergence floor is 0.005 nats,
+        rescaled to the chosen units, so the convergence distances and model
+        selection do not depend on `units`.
 
     Returns
     -------
     dict
         Results containing:
+        - units: Units of the MI quantities below
         - distances: Distance values
         - mi_values: Observed MI at each distance
         - mi_adjusted: Baseline-corrected MI
@@ -104,11 +137,13 @@ def mi_decay_analysis(
     Howard-Spink, S. et al. (2024). Hierarchical structure in
     sequence learning. Nature Neuroscience.
     """
-    if random_state is not None:
-        np.random.seed(random_state)
+    _nats_to_units_factor(units)  # validate before any expensive computation
 
     if len(sequence) < 3:
         raise ValueError("Sequence too short for MI analysis")
+
+    # Same per-shuffle seeding as mi_decay_analysis_parallel, so both give identical baselines
+    seeds = np.random.default_rng(random_state).integers(0, 2**31, size=n_shuffles)
 
     max_dist = min(max_distance, len(sequence) - 1)
     distances = np.arange(1, max_dist + 1)
@@ -122,23 +157,18 @@ def mi_decay_analysis(
     for i, d in distance_iter:
         x_seq, y_seq = _get_distance_pairs(sequence, d)
         if x_seq and y_seq:
-            mi_values[i] = _mutual_information(x_seq, y_seq)
+            mi_values[i] = _mutual_information(x_seq, y_seq, units)
 
     mi_shuffled_all = np.zeros((len(distances), n_shuffles))
 
-    shuffle_iter = tqdm(range(n_shuffles), desc="Computing shuffled baseline", disable=not verbose)
-    for perm_idx in shuffle_iter:
-        permuted = sequence.copy()
-        np.random.shuffle(permuted)
-
-        for i, d in enumerate(distances):
-            x_seq, y_seq = _get_distance_pairs(permuted, d)
-            if x_seq and y_seq:
-                mi_shuffled_all[i, perm_idx] = _mutual_information(x_seq, y_seq)
+    shuffle_iter = tqdm(enumerate(seeds), total=n_shuffles, desc="Computing shuffled baseline", disable=not verbose)
+    for perm_idx, seed in shuffle_iter:
+        mi_shuffled_all[:, perm_idx] = _compute_shuffle_mi(sequence, distances, seed, units)
 
     mi_baseline = np.mean(mi_shuffled_all, axis=1)
     mi_baseline_std = np.std(mi_shuffled_all, axis=1)
     mi_adjusted = mi_values - mi_baseline
+    floor = _CONVERGENCE_FLOOR_NATS * _nats_to_units_factor(units)
 
     z_score = (1 - confidence_level) / 2
     z_value = -special.ndtri(z_score)
@@ -153,7 +183,7 @@ def mi_decay_analysis(
     # Alternative: Find where adjusted MI first drops below a threshold and stays below
     # This is more conservative and detects when correlations have decayed
     max_mi = np.max(mi_adjusted[mi_adjusted > 0]) if np.any(mi_adjusted > 0) else 0
-    convergence_threshold = max(0.05 * max_mi, 0.005)  # 5% of max or 0.005 bits (stricter)
+    convergence_threshold = max(0.05 * max_mi, floor)  # 5% of max or the floor (stricter)
     window_size = 3  # Require 3 consecutive low points (less conservative)
 
     convergence_dist = 0
@@ -177,6 +207,7 @@ def mi_decay_analysis(
     model_comparison = _compare_decay_models(distances, mi_adjusted, max_sig_dist)
 
     return {
+        "units": units,
         "distances": distances,
         "mi_values": mi_values,
         "mi_adjusted": mi_adjusted,
@@ -194,7 +225,7 @@ def mi_decay_analysis(
     }
 
 
-def _compute_shuffle_mi(sequence, distances, seed):
+def _compute_shuffle_mi(sequence, distances, seed, units):
     """Compute MI for one shuffle with fixed seed (helper for parallelization)."""
     rng = np.random.default_rng(seed)
     permuted = sequence.copy()
@@ -204,7 +235,7 @@ def _compute_shuffle_mi(sequence, distances, seed):
     for i, d in enumerate(distances):
         x_seq, y_seq = _get_distance_pairs(permuted, d)
         if x_seq and y_seq:
-            mi_values[i] = _mutual_information(x_seq, y_seq)
+            mi_values[i] = _mutual_information(x_seq, y_seq, units)
     return mi_values
 
 
@@ -216,6 +247,7 @@ def mi_decay_analysis_parallel(
     random_state: int | None = None,
     n_jobs: int = -1,
     verbose: bool = False,
+    units: str = "nats",
 ) -> dict:
     """
     Analyze hierarchical structure via mutual information decay using parallel processing.
@@ -236,11 +268,17 @@ def mi_decay_analysis_parallel(
         Number of parallel jobs. -1 means using all processors.
     verbose : bool, default=False
         If True, display progress bars and intermediate information.
+    units : {"nats", "bits"}, default="nats"
+        Unit of all MI quantities (``mi_values``, ``mi_adjusted``,
+        ``mi_baseline``, ``mi_ci_*``). The convergence floor is 0.005 nats,
+        rescaled to the chosen units, so the convergence distances and model
+        selection do not depend on `units`.
 
     Returns
     -------
     dict
         Results containing:
+        - units: Units of the MI quantities below
         - distances: Distance values
         - mi_values: Observed MI at each distance
         - mi_adjusted: Baseline-corrected MI
@@ -265,6 +303,8 @@ def mi_decay_analysis_parallel(
     Howard-Spink, S. et al. (2024). Hierarchical structure in
     sequence learning. Nature Neuroscience.
     """
+    _nats_to_units_factor(units)  # validate before any expensive computation
+
     if len(sequence) < 3:
         raise ValueError("Sequence too short for MI analysis")
 
@@ -289,11 +329,11 @@ def mi_decay_analysis_parallel(
     for i, d in distance_iter:
         x_seq, y_seq = _get_distance_pairs(sequence, d)
         if x_seq and y_seq:
-            mi_values[i] = _mutual_information(x_seq, y_seq)
+            mi_values[i] = _mutual_information(x_seq, y_seq, units)
 
     # Parallel shuffle computation
     mi_shuffled_list = Parallel(n_jobs=n_jobs, backend="loky")(
-        delayed(_compute_shuffle_mi)(sequence, distances, seed)
+        delayed(_compute_shuffle_mi)(sequence, distances, seed, units)
         for seed in tqdm(seeds, desc="Computing shuffled baseline (parallel)", disable=not verbose)
     )
 
@@ -302,6 +342,7 @@ def mi_decay_analysis_parallel(
     mi_baseline = np.mean(mi_shuffled_all, axis=1)
     mi_baseline_std = np.std(mi_shuffled_all, axis=1)
     mi_adjusted = mi_values - mi_baseline
+    floor = _CONVERGENCE_FLOOR_NATS * _nats_to_units_factor(units)
 
     z_score = (1 - confidence_level) / 2
     z_value = -special.ndtri(z_score)
@@ -314,7 +355,7 @@ def mi_decay_analysis_parallel(
 
     # Alternative: Find where adjusted MI first drops below a threshold and stays below
     max_mi = np.max(mi_adjusted[mi_adjusted > 0]) if np.any(mi_adjusted > 0) else 0
-    convergence_threshold = max(0.05 * max_mi, 0.005)
+    convergence_threshold = max(0.05 * max_mi, floor)
     window_size = 3
 
     convergence_dist = 0
@@ -336,6 +377,7 @@ def mi_decay_analysis_parallel(
     model_comparison = _compare_decay_models(distances, mi_adjusted, max_sig_dist)
 
     return {
+        "units": units,
         "distances": distances,
         "mi_values": mi_values,
         "mi_adjusted": mi_adjusted,
@@ -353,16 +395,16 @@ def mi_decay_analysis_parallel(
     }
 
 
-def _mutual_information(x_seq: list[str], y_seq: list[str]) -> float:
-    """Calculate MI(X,Y) = H(X) + H(Y) - H(X,Y)."""
+def _mutual_information(x_seq: list[str], y_seq: list[str], units: str = "nats") -> float:
+    """Calculate MI(X,Y) = H(X) + H(Y) - H(X,Y) in the given units."""
     if len(x_seq) != len(y_seq) or not x_seq:
         return 0.0
 
-    h_x = grassberger_entropy(x_seq)
-    h_y = grassberger_entropy(y_seq)
+    h_x = grassberger_entropy(x_seq, units)
+    h_y = grassberger_entropy(y_seq, units)
 
     joint_seq = [f"{x}_{y}" for x, y in zip(x_seq, y_seq)]
-    h_xy = grassberger_entropy(joint_seq)
+    h_xy = grassberger_entropy(joint_seq, units)
 
     return h_x + h_y - h_xy
 

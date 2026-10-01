@@ -35,7 +35,7 @@ Use submodules (token, string, stringset, grammar) for new code.
 """
 
 from . import grammar, string, stringset, token
-from .grammar.topological import topological_entropy
+from .grammar.topological import TopologicalEntropyWarning, topological_entropy
 from .string.compression import compressibility, lzw_complexity
 from .string.entropy import block_entropy, emc, entropy, entropy_rate
 from .stringset.chunk_strength import (
@@ -67,6 +67,7 @@ __all__ = [
     "string_similarity",
     "average_string_similarity",
     "topological_entropy",
+    "TopologicalEntropyWarning",
     # "count",
     # "most_common",
     "global_acs_knowlton96",

@@ -1,11 +1,18 @@
 """Tests for string-level metrics."""
 
+import os
+import subprocess
+import sys
+
 import numpy as np
 import pytest
 
 from symseq.metrics.string import (
     block_entropy,
     compressibility,
+    compute_compression_metrics_ensemble,
+    compute_entropy_metrics_ensemble,
+    detect_saturation_point,
     emc,
     entropy,
     entropy_rate,
@@ -135,6 +142,16 @@ class TestCompressibility:
         C = compressibility(seq)
         assert 0 < C <= 1.0
 
+    def test_short_strings_not_dominated_by_gzip_framing(self):
+        assert compressibility(["A"] * 8) < 1.0
+        assert compressibility(["A"] * 10) < 1.0
+
+    def test_framing_is_content_independent(self):
+        from symseq.metrics.string.compression import gzip_payload_size
+
+        assert gzip_payload_size(b"") == 0
+        assert 0 < gzip_payload_size(b"ABCDEFGH") <= 8
+
 
 class TestLZWComplexity:
     """Tests for LZW complexity."""
@@ -149,6 +166,62 @@ class TestLZWComplexity:
         C = lzw_complexity(seq, normalized=False)
         assert C > 0
         assert isinstance(C, (int, float))
+
+
+class TestLZWMultiCharacterSymbols:
+    def test_multichar_symbols_do_not_crash(self):
+        assert lzw_complexity(["AB", "CD"] * 10) == pytest.approx(lzw_complexity(["a", "b"] * 10))
+
+    def test_non_latin1_symbols(self):
+        assert lzw_complexity(["α", "β", "α", "β"]) == lzw_complexity(["a", "b", "a", "b"])
+
+    def test_indexed_states(self):
+        assert 0 < lzw_complexity(["A(1)", "B(2)", "A(1)", "C(3)"] * 5) <= 1
+
+
+class TestCompressionEnsemble:
+    def _ensemble(self, n_jobs):
+        # integer symbols make compressibility fail (str.join) while lzw still works
+        return compute_compression_metrics_ensemble([["A", "B"] * 10, [1, 2] * 10], n_jobs=n_jobs)
+
+    @pytest.mark.parametrize("n_jobs", [1, 2])
+    def test_failure_is_nan_and_aligned_and_warned(self, n_jobs):
+        with pytest.warns(UserWarning, match="failed for 1 of 2"):
+            res = self._ensemble(n_jobs)
+        assert len(res["compressibility"]) == len(res["lzw_complexity"]) == 2
+        assert not np.isnan(res["compressibility"][0]) and np.isnan(res["compressibility"][1])
+        assert not np.isnan(res["lzw_complexity"][1])
+
+    def test_serial_equals_parallel(self):
+        with pytest.warns(UserWarning):
+            serial = self._ensemble(1)
+        with pytest.warns(UserWarning):
+            parallel = self._ensemble(2)
+        np.testing.assert_array_equal(serial["compressibility"], parallel["compressibility"])
+        np.testing.assert_array_equal(serial["lzw_complexity"], parallel["lzw_complexity"])
+
+
+class TestSaturationDetection:
+    def test_constant_sequence_has_no_memory(self):
+        res = detect_saturation_point(["A"] * 200, max_k=6)
+        assert res["k_star"] == 1
+
+    def test_unknown_method_raises(self):
+        with pytest.raises(ValueError, match="Unknown saturation method"):
+            detect_saturation_point(list("ABCABC") * 20, max_k=4, method="not-a-method")
+
+    def test_ensemble_unknown_method_raises(self):
+        with pytest.raises(ValueError, match="Unknown saturation method"):
+            compute_entropy_metrics_ensemble([list("ABCABC") * 20], saturation_method="not-a-method")
+
+    @pytest.mark.parametrize("method", ["adaptive", "relative", "statistical", "hybrid"])
+    def test_ensemble_applies_the_requested_method(self, method):
+        rng = np.random.default_rng(0)
+        seq = [str(x) for x in rng.integers(0, 3, 400)]
+        expected = detect_saturation_point(seq, 6, method=method)["k_star"]
+        res = compute_entropy_metrics_ensemble([seq], max_block_size=6, saturation_method=method)
+        assert res["saturation_results_raw"][0]["k_star"] == expected
+        assert res["saturation_results_raw"][0]["method_used"] == method
 
 
 class TestLinguisticComplexity:
@@ -198,6 +271,24 @@ class TestPermutationEntropy:
         seq = np.random.randn(100)
         H = permutation_entropy(seq, order=3, normalize=True)
         assert 0 <= H <= 1.0
+
+    def test_deterministic_across_hash_seeds(self):
+        code = (
+            "from symseq.metrics.string import permutation_entropy as p;"
+            "s = list('ABCAACBBCABCCABACBACBCCA' * 10);"
+            "print(repr(p(s, order=3)))"
+        )
+        outputs = {
+            subprocess.run(
+                [sys.executable, "-c", code],
+                env={**os.environ, "PYTHONHASHSEED": seed},
+                capture_output=True,
+                text=True,
+                check=True,
+            ).stdout
+            for seed in ("1", "2", "3")
+        }
+        assert len(outputs) == 1
 
 
 if __name__ == "__main__":

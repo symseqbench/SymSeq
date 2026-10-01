@@ -14,6 +14,7 @@ import networkx as nx
 import numpy as np
 
 from symseq.utils.io import get_logger
+from symseq.utils.linalg import spectral_radius
 
 logger = get_logger(__name__)
 
@@ -394,9 +395,7 @@ def generate_grammar_with_target_te_complexity(
 
 
 def complexity(adjMat, eps_bias):
-    # return np.log(np.max(np.abs(np.linalg.eigvalsh(adjMat))))
-    x = np.real(np.max(np.abs(np.linalg.eigvals(adjMat))))
-    return np.log(max(x, eps_bias))
+    return np.log(max(spectral_radius(adjMat), eps_bias))
 
 
 def set_weights(complexity, edges, with_detailed_density):

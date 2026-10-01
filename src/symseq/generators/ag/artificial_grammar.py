@@ -304,7 +304,7 @@ class ArtificialGrammar(SymbolicSequencer):
         rng: np.random.Generator | None = None,
         seed: int = 42,
         verbose: bool = False,
-        target_complexity: None | float = None,
+        target_complexity: float | None = None,
         **synthesis_kwargs,
     ) -> ArtificialGrammar:
         """
@@ -344,7 +344,7 @@ class ArtificialGrammar(SymbolicSequencer):
         verbose : bool, optional
             Display progress information. Defaults to False.
         target_complexity : float, optional
-            Target transfer-entropy complexity of the grammar. If None, the grammar is drawn randomly under the
+            Target topological-entropy complexity of the grammar. If None, the grammar is drawn randomly under the
             constraints above; otherwise it is synthesized to match this complexity. Defaults to None.
         **synthesis_kwargs
             Additional arguments forwarded to `grammar_with_complexity`. Only used if `target_complexity` is not None.
@@ -644,7 +644,10 @@ class ArtificialGrammar(SymbolicSequencer):
             and the outgoing probabilities for some states may not sum to 1. Defaults to True.
         correct_terminal_sink : bool, optional
             If True, adds a transition from the EOS to all initial states, with the probabilities given by
-            `start_probabilities` (uniform by default). Defaults to False.
+            `start_probabilities` (uniform by default). This closes the grammar graph: every exit loops back to the
+            start states, which is the convention under which topological entropy is defined in the AGL literature
+            (see `topological_entropy`). Grammars synthesized with a target complexity already contain these EOS
+            -> start transitions. Defaults to False.
         verbose : bool, optional
             Display table. Defaults to False.
         binary : bool, optional
@@ -699,7 +702,7 @@ class ArtificialGrammar(SymbolicSequencer):
             table = (table > 0.0).astype(int)
         return table
 
-    def get_binary_transition_table(self, full=True, correct_terminal_sink=True, verbose=False) -> np.ndarray:
+    def get_binary_transition_table(self, full=True, correct_terminal_sink=False, verbose=False) -> np.ndarray:
         """
         Return a copy of the look-up table with all allowed transitions as an adjacency matrix. See also
         `get_transition_table`.
@@ -711,8 +714,8 @@ class ArtificialGrammar(SymbolicSequencer):
             the terminal states without the EOS. Note that in this case the transition probabilities are not corrected
             and the outgoing probabilities for some states may not sum to 1 any more. Defaults to True.
         correct_terminal_sink : bool, optional
-            If True, adds a transition from the EOS to all initial states, with the probabilities given by
-            `start_probabilities` (uniform by default). Defaults to True.
+            If True, adds a transition from the EOS to all initial states (the loop-back closure used for
+            topological entropy, see `topological_entropy`). Defaults to False.
         verbose : bool, optional
             Display table. Defaults to False.
 
@@ -725,6 +728,100 @@ class ArtificialGrammar(SymbolicSequencer):
         transitions = transitions > 0.0
         binary_transitions = transitions.astype(int)
         return binary_transitions
+
+    def topological_entropy(self, correct_terminal_sink: bool = False, verbose: bool = False) -> float:
+        """
+        Compute the topological entropy (TE) of the grammar, in nats.
+
+        Parameters
+        ----------
+        correct_terminal_sink : bool, optional
+            If True, close the grammar graph by adding transitions from the EOS to all start states before computing
+            TE (see Notes). Set this to obtain values comparable to the AGL literature. Defaults to False.
+        verbose : bool, optional
+            Show progress information. Defaults to False.
+
+        Returns
+        -------
+        float
+            ln of the spectral radius of the binary transition table (EOS included). 0.0 if the table is acyclic.
+
+        Warns
+        -----
+        TopologicalEntropyWarning
+            If the table has no EOS state, or no transition from the EOS to every start state (an *open* grammar),
+            or if the table is acyclic.
+
+        Notes
+        -----
+        TE is the exponential growth rate of the number of distinct strings of length n. A grammar entered at its
+        start states and left at its terminal states is an *open* graph. In the AGL literature, TE is computed on the
+        *closed* graph in which every exit loops back to the start states, with the exit emitted as a delimiter
+        symbol (Bollt & Jones, 2000, p. 165; Warren & Schroeder, 2015, Sections 7.4.1 and 12.1; Vokey & Jamieson,
+        2020). Here the EOS state is that delimiter, and ``correct_terminal_sink=True`` adds the EOS -> start
+        transitions. TE then measures the growth rate of concatenations of grammatical strings.
+
+        The default stays open (``correct_terminal_sink=False``), and computing TE on an open grammar emits a
+        `TopologicalEntropyWarning`. Grammars created with `from_constraints` and a ``target_complexity`` already
+        contain the EOS -> start transitions and are closed either way.
+
+        The closure matters for every grammar, not only acyclic ones. For Reber (1967) (preset ``FSG_G3_C``), the
+        open table gives 0.382 and the closed table gives 0.602, the value reported by Schiff & Katan (2014) and
+        Vokey & Jamieson (2020). An acyclic grammar has TE = 0 on its open table (strictly -inf, see
+        `symseq.metrics.grammar.topological.topological_entropy`), but a positive TE once closed.
+
+        References
+        ----------
+        .. [1] Bollt, E. M., & Jones, M. A. (2000). The complexity of artificial grammars. Nonlinear Dynamics,
+           Psychology, and Life Sciences, 4(2), 153-168.
+        .. [2] Schiff, R., & Katan, P. (2014). Does complexity matter? Meta-analysis of learner performance in
+           artificial grammar tasks. Frontiers in Psychology, 5, 1084. doi:10.3389/fpsyg.2014.01084
+        .. [3] Warren, R., & Schroeder, P. J. (2015). Topological entropy measure of artificial grammar complexity for
+           use in designing experiments on human performance in intelligence, surveillance, and reconnaissance (ISR)
+           tasks. Technical Report ADA626837, Defense Technical Information Center.
+        .. [4] Vokey, J. R., & Jamieson, R. K. (2020). On the computation of the topological entropy of artificial
+           grammars. The Quantitative Methods for Psychology, 16(4), 355-362. doi:10.20982/tqmp.16.4.p355
+        """
+        # imported here to avoid loading the full metrics package with the generators
+        from symseq.metrics.grammar.topological import (
+            TopologicalEntropyWarning,
+            topological_entropy,
+            warning_banner,
+        )
+
+        table = self.get_binary_transition_table(full=True, correct_terminal_sink=correct_terminal_sink)
+
+        problems = []
+        eos_idx = next((i for i, s in enumerate(self.states) if s == self.eos), None)
+        if eos_idx is None:
+            problems.append(f"The grammar has no EOS state ({self.eos!r}), so exits cannot loop back to the start.")
+        else:
+            unlinked = [
+                state.tostring()
+                for state in self.start_states
+                if table[next(i for i, s in enumerate(self.states) if s == state), eos_idx] == 0
+            ]
+            if unlinked:
+                problems.append(
+                    f"Open grammar: no transition from the EOS ({self.eos!r}) to start state(s) {unlinked}."
+                )
+        if problems:
+            warnings.warn(
+                warning_banner(
+                    f"TOPOLOGICAL ENTROPY OF AN OPEN GRAMMAR ({self.label})",
+                    [
+                        *problems,
+                        "TE is defined in the AGL literature on the closed graph, where exits loop back to the start "
+                        "states (Bollt & Jones, 2000; Warren & Schroeder, 2015). This value is not comparable to "
+                        "published TE values.",
+                        "Pass correct_terminal_sink=True to close the grammar.",
+                    ],
+                ),
+                TopologicalEntropyWarning,
+                stacklevel=2,
+            )
+
+        return topological_entropy(transitions=table, method="direct", verbose=verbose)
 
     def validate(self):
         """Validate state membership and the probabilistic transition model.

@@ -68,6 +68,26 @@ class TrialSet:
             raise KeyError(f"unknown split {name!r}; available: {sorted(self.splits)}")
         return [self.trials[i] for i in self.splits[name]]
 
+    def string_set(self, split: str | None = None) -> list[list[str]]:
+        """Return the trials' symbol sequences as a string set.
+
+        Ready for ``symseq.metrics`` and ``symseq.utils.strtools``. Does not
+        touch the draw cursor, unlike ``draw_trial`` / ``draw_batch``.
+
+        Parameters
+        ----------
+        split : str, optional
+            Restrict to a named split. ``None`` returns all trials in canonical
+            order.
+
+        Returns
+        -------
+        list of list of str
+            One ``Trial.symbols`` list per trial.
+        """
+        trials = self.split(split) if split is not None else self.trials
+        return [t.symbols for t in trials]
+
     # ---------- TrialSource protocol ----------
 
     @property
@@ -81,6 +101,9 @@ class TrialSet:
         Cycles deterministically through the split. Defaults to ``"train"`` if
         present at construction time, otherwise iterates over all trials.
         kwargs are accepted for protocol compatibility but unused (reads pregenerated set).
+
+        Advances the internal cursor. For read-only access (analysis, inspection)
+        use ``string_set()``, ``split()`` or iteration instead.
         """
         if self._draw_split is not None:
             idxs = self.splits[self._draw_split]

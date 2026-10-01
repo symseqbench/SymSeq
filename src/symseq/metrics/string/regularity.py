@@ -46,7 +46,13 @@ def permutation_entropy(
     Permutation entropy quantifies complexity based on ordinal patterns.
     Robust to noise and non-stationarity.
 
-    For symbolic sequences, tokens are converted to numeric values via hashing.
+    For symbolic sequences, tokens are mapped to integers by their rank in the sorted
+    alphabet, which makes the result reproducible across processes. The ordinal patterns
+    therefore encode the (arbitrary) lexicographic order of the symbols, not any
+    property of the sequence itself: relabeling the symbols can change the entropy, and
+    equal symbols always tie. For nominal data this is a descriptive statistic of the
+    chosen labeling only; it is meaningful as a measure of temporal structure for ordinal or
+    numeric sequences.
 
     References
     ----------
@@ -60,7 +66,8 @@ def permutation_entropy(
     """
     if isinstance(sequence, list):
         if len(sequence) > 0 and isinstance(sequence[0], str):
-            sequence = np.array([hash(s) % 10000 for s in sequence], dtype=float)
+            rank = {symbol: i for i, symbol in enumerate(sorted(set(sequence)))}
+            sequence = np.array([rank[s] for s in sequence], dtype=float)
         else:
             sequence = np.asarray(sequence, dtype=float)
     else:

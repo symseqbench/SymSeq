@@ -3,11 +3,14 @@
 
 """Shannon entropy and related metrics with robust finite-sample handling."""
 
-import warnings
 from collections import Counter
 from typing import Dict, List, Optional, Tuple, Union
 
 import numpy as np
+
+from symseq.utils.io import get_logger
+
+logger = get_logger(__name__)
 
 
 def entropy(sequence: list[str], bias_correction: bool = True) -> float:
@@ -145,10 +148,9 @@ def entropy_rate(
     - For deterministic sequences: h_mu = 0
     """
     if len(sequence) < max_block_size + 1:
-        warnings.warn(
+        logger.warning(
             f"Sequence too short (N={len(sequence)}) for max_block_size={max_block_size}. "
             "Entropy rate estimate will be unreliable.",
-            UserWarning,
         )
         max_block_size = max(2, len(sequence) // 3)
 
@@ -311,15 +313,14 @@ def emc(sequence: list[str], max_block_size: int = 10, return_curve: bool = Fals
         else:
             # No plateau - use peak value (may be unreliable)
             emc_value = peak_value
-            warnings.warn(
+            logger.warning(
                 f"EMC did not converge within max_block_size={max_block_size}. "
                 "Consider increasing max_block_size or sequence length.",
-                UserWarning,
             )
     else:
         # Too few points - use maximum
         emc_value = max(excess_curve)
-        warnings.warn("Insufficient block sizes for reliable EMC. Results may be unreliable.", UserWarning)
+        logger.warning("Insufficient block sizes for reliable EMC. Results may be unreliable.")
 
     # Sanity check: EMC should be non-negative and bounded
     emc_value = max(0.0, emc_value)  # Can't be negative
@@ -359,9 +360,41 @@ def detect_saturation_point(sequence: list[str], max_k: int, method: str = "adap
         'increments': list - Block entropy increments
         'H_values': list - Block entropy values
         'diagnostic': dict - Additional diagnostic info
+
+    Raises
+    ------
+    ValueError
+        If `method` is not one of the listed methods.
+
+    Notes
+    -----
+    A constant sequence (single-symbol alphabet) has no memory and returns k* = 1.
     """
-    # Compute block entropies
+    _validate_saturation_method(method)
     H_values = [block_entropy(sequence, k) for k in range(1, max_k + 1)]
+    return _detect_saturation_from_entropies(H_values, len(sequence), len(set(sequence)), method)
+
+
+_SATURATION_METHODS = ("adaptive", "relative", "statistical", "hybrid")
+
+
+def _validate_saturation_method(method: str) -> None:
+    if method not in _SATURATION_METHODS:
+        raise ValueError(f"Unknown saturation method {method!r}. Choose one of {_SATURATION_METHODS}.")
+
+
+def _detect_saturation_from_entropies(
+    H_values: list[float], N: int, alphabet_size: int, method: str, warn_unreliable: bool = True
+) -> dict:
+    """
+    Detect the saturation point from block entropies H_1..H_max_k (shared core).
+
+    Used by `detect_saturation_point` and by the ensemble path, so both apply the same rule.
+    If `warn_unreliable` is False, the log message for an unreliable k* is suppressed (the result is
+    still marked as low confidence).
+    """
+    _validate_saturation_method(method)
+    max_k = len(H_values)
 
     # Compute increments δ_k = H_{k+1} - H_k
     increments = [H_values[i + 1] - H_values[i] for i in range(len(H_values) - 1)]
@@ -374,6 +407,17 @@ def detect_saturation_point(sequence: list[str], max_k: int, method: str = "adap
             "increments": increments,
             "H_values": H_values,
             "diagnostic": {"error": "Insufficient data points"},
+        }
+
+    if alphabet_size <= 1:
+        # Constant sequence: zero entropy at every k, so there is no memory to detect.
+        return {
+            "k_star": 1,
+            "confidence": "high",
+            "method_used": method,
+            "increments": increments,
+            "H_values": H_values,
+            "diagnostic": {"pattern": "constant_sequence", "N": N, "alphabet_size": alphabet_size},
         }
 
     # Estimate noise level from late increments (should be small if converged)
@@ -497,7 +541,8 @@ def detect_saturation_point(sequence: list[str], max_k: int, method: str = "adap
         k_candidates = []
 
         for m in methods_to_try:
-            result = detect_saturation_point(sequence, max_k, method=m)
+            # reliability is checked once below
+            result = _detect_saturation_from_entropies(H_values, N, alphabet_size, m, warn_unreliable=False)
             k_candidates.append(result["k_star"])
 
         # Use median (robust to outliers)
@@ -522,20 +567,17 @@ def detect_saturation_point(sequence: list[str], max_k: int, method: str = "adap
         diagnostic["warning"] = "No clear saturation detected within max_k"
 
     # Additional validation
-    N = len(sequence)
-    alphabet_size = len(set(sequence))
-
     # Check if k* is reasonable given sequence length
     # Rule of thumb: Need N >> |A|^k for reliable k-gram statistics
     min_samples_per_kgram = 3
     max_reliable_k = int(np.floor(np.log(N / min_samples_per_kgram) / np.log(alphabet_size)))
 
     if k_star > max_reliable_k:
-        warnings.warn(
-            f"Detected k*={k_star} may be unreliable for N={N} and alphabet size={alphabet_size}. "
-            f"Maximum reliable k ≈ {max_reliable_k}",
-            UserWarning,
-        )
+        if warn_unreliable:
+            logger.warning(
+                f"Detected k*={k_star} may be unreliable for N={N} and alphabet size={alphabet_size}. "
+                f"Maximum reliable k ≈ {max_reliable_k}"
+            )
         confidence = "low"
 
     diagnostic["max_reliable_k"] = max_reliable_k
@@ -725,36 +767,21 @@ def _emc_from_cache(H_cache: dict[int, float], max_k: int) -> tuple[float, float
     H_1 = H_cache[1]
     decomposition_sum = h_mu + emc_value
     if abs(decomposition_sum - H_1) > 0.5 * H_1:  # More than 50% error
-        warnings.warn(
+        logger.warning(
             f"Entropy decomposition inconsistent: h_μ ({h_mu:.3f}) + EMC ({emc_value:.3f}) = "
             f"{decomposition_sum:.3f} ≠ H(1) = {H_1:.3f}. "
             "Consider increasing max_block_size for better convergence.",
-            UserWarning,
         )
 
     return emc_value, h_mu
 
 
-def _detect_saturation_from_cache(H_cache: dict[int, float], max_k: int, method: str = "adaptive") -> dict:
+def _detect_saturation_from_cache(
+    H_cache: dict[int, float], max_k: int, N: int, alphabet_size: int, method: str = "adaptive"
+) -> dict:
     """Detect saturation using pre-computed H values (helper for optimization)."""
     H_values = [H_cache[k] for k in range(1, max_k + 1)]
-    increments = [H_values[i + 1] - H_values[i] for i in range(len(H_values) - 1)]
-
-    # Simplified saturation detection (basic version)
-    if len(increments) >= 3:
-        # Find where increments drop significantly
-        mean_early = np.mean(increments[:3])
-        for i in range(3, len(increments)):
-            if increments[i] < 0.3 * mean_early:
-                return {
-                    "k_star": i + 1,
-                    "confidence": "medium",
-                    "method_used": method,
-                    "increments": increments,
-                    "H_values": H_values,
-                }
-
-    return {"k_star": 2, "confidence": "low", "method_used": method, "increments": increments, "H_values": H_values}
+    return _detect_saturation_from_entropies(H_values, N, alphabet_size, method)
 
 
 def compute_entropy_metrics_ensemble(
@@ -779,7 +806,8 @@ def compute_entropy_metrics_ensemble(
     min_sequence_length : int, default=10
         Minimum sequence length to include in analysis.
     saturation_method : str, default='hybrid'
-        Method for saturation detection ('adaptive', 'hybrid', etc.).
+        Method for saturation detection, as in `detect_saturation_point`
+        ('adaptive', 'relative', 'statistical' or 'hybrid').
 
     Returns
     -------
@@ -791,13 +819,14 @@ def compute_entropy_metrics_ensemble(
         'n_sequences_analyzed': int
         'mean_sequence_length': float
     """
+    _validate_saturation_method(saturation_method)
+
     # Filter sequences by minimum length
     valid_sequences = [seq for seq in sequences if len(seq) >= min_sequence_length]
 
     if not valid_sequences:
-        warnings.warn(
+        logger.warning(
             f"No sequences meet minimum length requirement ({min_sequence_length}). Returning default values.",
-            UserWarning,
         )
         return {
             "block_entropy_k2": [],
@@ -829,14 +858,14 @@ def compute_entropy_metrics_ensemble(
         try:
             H_cache = _compute_block_entropies_cached(seq, max_k)
         except Exception as e:
-            warnings.warn(f"Failed to compute block entropies: {e}", UserWarning)
+            logger.warning(f"Failed to compute block entropies: {e}")
             continue
 
         # Use cached block entropy at k=2
         try:
             block_entropies_k2.append(H_cache[2])
         except Exception as e:
-            warnings.warn(f"Failed to retrieve block entropy k=2: {e}", UserWarning)
+            logger.warning(f"Failed to retrieve block entropy k=2: {e}")
 
         # Compute entropy rate and EMC using cached values
         if max_k >= 3:
@@ -845,14 +874,16 @@ def compute_entropy_metrics_ensemble(
                 entropy_rates.append(h_mu)
                 emcs.append(emc_val)
             except Exception as e:
-                warnings.warn(f"Failed to compute EMC/entropy rate from cache: {e}", UserWarning)
+                logger.warning(f"Failed to compute EMC/entropy rate from cache: {e}")
 
             # Saturation detection using cached values
             try:
-                sat_result = _detect_saturation_from_cache(H_cache, max_k, method=saturation_method)
+                sat_result = _detect_saturation_from_cache(
+                    H_cache, max_k, len(seq), len(set(seq)), method=saturation_method
+                )
                 saturation_results.append(sat_result)
             except Exception as e:
-                warnings.warn(f"Failed saturation detection from cache: {e}", UserWarning)
+                logger.warning(f"Failed saturation detection from cache: {e}")
 
     # Aggregate results
     saturation_agg = aggregate_saturation_results(saturation_results)

@@ -5,10 +5,11 @@
 
 import math
 from collections import Counter, defaultdict
-from gzip import compress
 
 import numpy as np
 from tqdm import tqdm
+
+from symseq.metrics.string.compression import gzip_payload_size
 
 
 def chomsky_classification(
@@ -602,7 +603,7 @@ def _estimate_kolmogorov_complexity(sequence: list[str]) -> float:
 
     string_repr = "".join(sequence)
     original_size = len(string_repr)
-    compressed_size = len(compress(string_repr.encode("utf-8")))
+    compressed_size = gzip_payload_size(string_repr.encode("utf-8"))
 
     complexity = compressed_size / original_size if original_size > 0 else 0
     return min(complexity, 1.0)

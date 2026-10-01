@@ -14,16 +14,20 @@ def acs_bailey2008(
     train_string_set: list[list[str]], test_string_set: list[list[str]], n_range: tuple[int, int] = (2, 3)
 ) -> list[float]:
     """
-    Compute chunk strength for each test sequence as the average frequency
-    of its n-grams in the training set.
+    Compute the associative chunk strength of each test sequence, following AGL StimSelect.
 
-    Chunk strength for a chunk g is defined as:
+    The strength of a chunk (n-gram) g is a saturating function of its training frequency, bounded
+    in [0, 1):
+
         S(g) = F(g) / (F(g) + E_n)
-    where:
-        F(g) = frequency of chunk g in training
-        E_n  = average frequency of all distinct n-grams in training
 
-    The score for a test sequence is the average chunk strength over all its n-grams.
+    where:
+        F(g) = frequency of chunk g in the training set (0 if unseen)
+        E_n  = expected chunk frequency for chunks of size n, i.e. the mean frequency over all
+               distinct n-grams occurring in training
+
+    A chunk of average frequency has strength 0.5 and S(g) -> 1 as F(g) >> E_n. The score of a test
+    sequence is the mean of S(g) over all of its chunks of every size in `n_range`.
 
     Parameters
     ----------
@@ -37,7 +41,16 @@ def acs_bailey2008(
     Returns
     -------
     list of float
-        Chunk strength scores for each test sequence.
+        Chunk strength scores in [0, 1) for each test sequence. Sequences shorter than every n in
+        `n_range` have no chunks and score 0.0.
+
+    Notes
+    -----
+    This is not the raw-frequency measure of Knowlton & Squire (1996), which is implemented by
+    `global_acs_knowlton96` and whose values are unbounded and grow with the size of the training
+    set. The StimSelect measure is normalized by E_n, so it is independent of how often the same
+    training strings are repeated and of the number of training strings (Bailey & Pothos, 2008). The
+    two are not interchangeable in absolute value, although they typically correlate highly.
 
     References
     ----------
@@ -71,8 +84,7 @@ def acs_bailey2008(
 
             strengths[string_idx].extend(chunk_scores)
 
-    strengths = [np.mean(s) if s else 0.0 for s in strengths]
-    return strengths
+    return [float(np.mean(chunk_scores)) if chunk_scores else 0.0 for chunk_scores in strengths]
 
 
 def global_acs_knowlton96(
@@ -82,8 +94,10 @@ def global_acs_knowlton96(
     Compute the global associative chunk strength (GACS) for each string in a test set.
 
     The chunk strength is defined in terms of the absolute frequency of a chunk
-    (the number of times that chunk appeared in the training strings). The chunk
-    strength is computed (summed) over all n-grams up to the specified range.
+    (the number of times that chunk appeared in the training strings). The score of a test
+    string is the mean training frequency of all its n-grams (over every n in `n_range`).
+    Values are unbounded and scale with the size of the training set; see `acs_bailey2008`
+    for the normalized variant.
 
     Parameters
     ----------
@@ -107,13 +121,13 @@ def global_acs_knowlton96(
     Cognition, 22(1), 169.
     """
     strengths = []
+    train_ngrams = {n: chunk_ngrams_string_set(train_string_set, n) for n in range(n_range[0], n_range[1] + 1)}
 
-    for string_idx, string in enumerate(test_string_set):
+    for string in test_string_set:
         total_ngrams = 0
         chunk_freqs = []
 
-        for n in range(n_range[0], n_range[1] + 1):
-            ngrams_train = chunk_ngrams_string_set(train_string_set, n)
+        for n, ngrams_train in train_ngrams.items():
             ngrams_string = [tuple(string[i : i + n]) for i in range(len(string) - n + 1)]
             total_ngrams += len(ngrams_string)
             ngram_freq = [ngrams_train.get(chunk, 0) for chunk in ngrams_string]

@@ -14,10 +14,11 @@ from .complexity import grammar_rule_complexity, grammar_state_complexity
 from .hierarchical import grassberger_entropy, mi_decay_analysis, mi_decay_analysis_parallel
 from .inference import cyk_parse
 from .markov import markov_order_selection, vlmc_fit
-from .topological import topological_entropy
+from .topological import TopologicalEntropyWarning, topological_entropy
 
 __all__ = [
     "topological_entropy",
+    "TopologicalEntropyWarning",
     "markov_order_selection",
     "vlmc_fit",
     "mi_decay_analysis",

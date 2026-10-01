@@ -73,6 +73,29 @@ class TestCollectionInterface:
         with pytest.raises(KeyError, match="unknown split 'val'"):
             ts.split("val")
 
+    def test_string_set_returns_all_trials(self):
+        ts = _ts(n=4)
+        assert ts.string_set() == [t.symbols for t in ts]
+        assert len(ts.string_set()) == len(ts)
+
+    def test_string_set_restricted_to_split(self):
+        ts = _ts(n=10, splits={"train": [0, 1, 2], "test": [7, 8, 9]})
+        assert ts.string_set(split="test") == [t.symbols for t in ts.split("test")]
+
+    def test_string_set_unknown_split(self):
+        ts = _ts(n=5, splits={"train": [0, 1]})
+        with pytest.raises(KeyError, match="unknown split 'nope'"):
+            ts.string_set(split="nope")
+
+    def test_string_set_does_not_advance_cursor(self):
+        ts = _ts(n=5, splits={"train": [0, 1, 2]})
+        ts.draw_trial()
+        ts.draw_trial()
+        ts.string_set()
+        ts.string_set(split="train")
+        # cursor is still at 2: the next draw is the third trial of the split
+        assert ts.draw_trial().symbols[0] == "t2_a"
+
 
 class TestDrawAndProtocol:
     def test_implements_trial_source(self):

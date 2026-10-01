@@ -99,7 +99,7 @@ def _compute_mi_pair(i, j, string_set, mi_func, method, kwargs):
     """Compute single pairwise MI (helper for parallelization)."""
     try:
         return i, j, mi_func(string_set[i], string_set[j], method=method, **kwargs)
-    except Exception:
+    except ValueError:
         return i, j, np.nan
 
 
@@ -239,8 +239,11 @@ def string_set_entropy(string_set: list[list[str]], use_frequencies: bool = Fals
     string_set : list of list of str
         Collection of sequences.
     use_frequencies : bool, default=False
-        If True, assume strings can repeat and compute empirical distribution.
-        If False, assume uniform distribution (1/T for each unique string).
+        If True, strings may repeat and the plug-in entropy of their empirical
+        distribution is returned.
+        If False, every distinct string is assumed equally likely and the result is
+        simply ``log2(T_unique)``, the maximum entropy for that many distinct
+        strings. This is not an estimate from the data: repetition counts are ignored.
 
     Returns
     -------
@@ -249,25 +252,29 @@ def string_set_entropy(string_set: list[list[str]], use_frequencies: bool = Fals
 
     Notes
     -----
-    Requires sufficient samples for reliable estimation (T > 20 recommended).
+    Requires sufficient samples for reliable estimation. A warning is issued when
+    T_unique < 20 (``use_frequencies=False``, where only the distinct strings matter)
+    or when T < 20 (``use_frequencies=True``).
 
     Examples
     --------
     >>> strings = [['A', 'B'], ['A', 'B'], ['C', 'D']]
     >>> H = string_set_entropy(strings, use_frequencies=True)
     """
-    if len(string_set) < 20:
-        warnings.warn("String set too small (T < 20) for reliable entropy estimation", UserWarning)
-
     if use_frequencies:
         string_tuples = [tuple(s) for s in string_set]
         counts = Counter(string_tuples)
         T = len(string_set)
         probs = np.array(list(counts.values())) / T
+        n_samples = T
     else:
         unique_strings = set(tuple(s) for s in string_set)
         T_unique = len(unique_strings)
         probs = np.full(T_unique, 1.0 / T_unique)
+        n_samples = T_unique
 
-    H = -np.sum(probs * np.log2(probs + 1e-12))
+    if n_samples < 20:
+        warnings.warn("String set too small (T < 20) for reliable entropy estimation", UserWarning, stacklevel=2)
+
+    H = -np.sum(probs * np.log2(probs))
     return H

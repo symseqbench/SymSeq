@@ -84,6 +84,11 @@ def grammar_state_complexity(grammar: dict) -> int:
     int
         Estimated state complexity.
 
+    Raises
+    ------
+    NotImplementedError
+        Always; this metric is not implemented yet.
+
     Notes
     -----
     This is a placeholder. Full implementation requires:
@@ -94,9 +99,7 @@ def grammar_state_complexity(grammar: dict) -> int:
     For regular grammars, this is the minimal DFA size.
     For context-free grammars, this is the minimal PDA size.
     """
-    warnings.warn("State complexity estimation is not fully implemented.", UserWarning)
-
-    return len(grammar)
+    raise NotImplementedError("State complexity estimation requires CFG-to-PDA conversion and minimization.")
 
 
 def derivation_tree_complexity(grammar: dict, n_samples: int = 100) -> dict:
