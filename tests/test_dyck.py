@@ -146,8 +146,10 @@ class TestStackMode:
 
     def test_stack_variable_length(self):
         """Test that stack mode generates variable-length strings."""
-        gen = DyckGenerator(k=1, mode="stack", n_distractors=0)
-        lengths = [len(gen.generate_string()) for _ in range(50)]
+        # Seeded: with p_open=0.3, 70% of strings have length 2, so an unseeded sample of 50 only
+        # exceeded 3 distinct lengths ~99.4% of the time.
+        gen = DyckGenerator(k=1, mode="stack", n_distractors=0, seed=0)
+        lengths = [len(gen.generate_string()) for _ in range(200)]
         # Should have some variation in lengths
         assert len(set(lengths)) > 3
 
