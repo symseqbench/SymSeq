@@ -34,6 +34,53 @@ def gzip_payload_size(data: bytes) -> int:
     return len(compress(data)) - _GZIP_FRAMING_BYTES
 
 
+def encode_symbols(*sequences: list[str]) -> list[bytes]:
+    """
+    Encode symbolic sequences as bytes for compression, one fixed-width integer id per symbol.
+
+    Joining symbols into one string is ambiguous for multi-character symbols
+    (``['A', 'BC']`` and ``['AB', 'C']`` both give ``'ABC'``) and a separator character would add
+    a byte of overhead per symbol and shift the compressed size. Mapping each distinct symbol to
+    an integer id avoids both: the encoding is injective and every symbol costs the same number
+    of bytes.
+
+    Parameters
+    ----------
+    *sequences : list of str
+        One or more symbolic sequences. All sequences share one symbol-to-id mapping, so a symbol
+        has the same bytes in each of them (required when compressing their concatenation).
+
+    Returns
+    -------
+    list of bytes
+        One byte string per input sequence, with 1, 2 or 4 bytes per symbol depending on the
+        total number of distinct symbols (<= 256, <= 65536, more).
+
+    Raises
+    ------
+    TypeError
+        If a symbol is not a ``str``. This is also the case for a string set (a list of
+        sequences) passed in place of a single sequence; concatenate string sets into one
+        sequence before calling.
+    """
+    alphabet: dict[str, int] = {}
+    ids = []
+    for seq in sequences:
+        seq_ids = []
+        for symbol in seq:
+            if not isinstance(symbol, str):
+                raise TypeError(
+                    f"Expected a single sequence of str symbols, got an element of type {type(symbol).__name__}. "
+                    "String sets are not supported here; concatenate them into one sequence first."
+                )
+            seq_ids.append(alphabet.setdefault(symbol, len(alphabet)))
+        ids.append(seq_ids)
+
+    n_symbols = len(alphabet)
+    dtype = np.uint8 if n_symbols <= 2**8 else np.uint16 if n_symbols <= 2**16 else np.uint32
+    return [np.asarray(seq_ids, dtype=dtype).tobytes() for seq_ids in ids]
+
+
 def compressibility(sequence: list[str]) -> float:
     """
     Determine the compressibility ratio of a sequence using the DEFLATE (gzip) algorithm.
@@ -61,8 +108,18 @@ def compressibility(sequence: list[str]) -> float:
     - Universal: works for any alphabet
     - Resolution is one byte, so values for very short sequences (< ~10 symbols)
       are coarse
+    - Symbols are encoded as fixed-width integer ids (`encode_symbols`), so multi-character
+      symbols are never confused with their concatenation. With more than 256 distinct symbols
+      each symbol takes 2 bytes, which raises the ratio accordingly.
+
+    Raises
+    ------
+    TypeError
+        If `sequence` is not a single sequence of str symbols (e.g. a string set). Concatenate
+        string sets into one sequence first.
     """
-    return gzip_payload_size("".join(sequence).encode()) / len(sequence)
+    (encoded,) = encode_symbols(sequence)
+    return gzip_payload_size(encoded) / len(sequence)
 
 
 def lzw_complexity(sequence: list[str], normalized: bool = True) -> float:

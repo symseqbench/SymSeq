@@ -73,6 +73,14 @@ class TestDistances:
         # With gzip framing included, two different 5-symbol strings scored only 0.2.
         assert normalized_compression_distance(list("ABCDE"), list("VWXYZ")) == pytest.approx(1.0)
 
+    def test_ncd_multichar_symbols_do_not_collide(self):
+        # both flatten to 'ABC' * 20, but share no symbol: they are as different as two sequences can be
+        assert normalized_compression_distance(["A", "BC"] * 20, ["AB", "C"] * 20) > 0.5
+
+    def test_ncd_rejects_string_set(self):
+        with pytest.raises(TypeError, match="single sequence"):
+            normalized_compression_distance([["A", "B"]] * 3, ["A", "B"] * 3)
+
     def test_ncd_empty_payload(self):
         assert normalized_compression_distance([], []) == 0.0
 
@@ -171,24 +179,24 @@ class TestInformationMetrics:
     def test_nmi_identical(self):
         seq = ["A", "B", "C", "A"]
         NMI = normalized_mutual_information(seq, seq)
-        assert NMI == pytest.approx(1.0, abs=0.01)
+        assert pytest.approx(1.0, abs=0.01) == NMI
 
     def test_string_set_entropy_uniform(self):
         strings = [["A", "B"], ["C", "D"], ["E", "F"], ["G", "H"]] * 10
         H = string_set_entropy(strings, use_frequencies=False)
-        assert H == pytest.approx(2.0, abs=0.01)
+        assert pytest.approx(2.0, abs=0.01) == H
 
     def test_string_set_entropy_with_frequencies(self):
         strings = [["A", "B"]] * 50 + [["C", "D"]] * 50
         H = string_set_entropy(strings, use_frequencies=True)
-        assert H == pytest.approx(1.0, abs=0.01)
+        assert pytest.approx(1.0, abs=0.01) == H
 
     def test_string_set_entropy_uniform_is_log2_unique(self):
         strings = [[str(i)] for i in range(32)] + [["0"]] * 50  # repeats are ignored
         with warnings.catch_warnings():
             warnings.simplefilter("error")
             H = string_set_entropy(strings, use_frequencies=False)
-        assert H == pytest.approx(5.0, abs=1e-12)
+        assert pytest.approx(5.0, abs=1e-12) == H
 
     def test_string_set_entropy_warns_on_few_distinct_strings(self):
         strings = [["A"], ["B"], ["C"]] * 20  # 60 strings, only 3 distinct

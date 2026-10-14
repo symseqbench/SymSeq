@@ -5,7 +5,7 @@ import pytest
 
 from symseq.generators.ag import ArtificialGrammar
 from symseq.generators.ag.inference import infer_markov, infer_vlmc
-from symseq.metrics.grammar.markov import vlmc_fit
+from symseq.metrics.grammar import vlmc_fit
 
 
 def _state_for_context(grammar, context):
@@ -122,20 +122,14 @@ def test_artificial_grammar_from_sequences_dispatches_backends():
     assert vlmc.metadata["inference"]["method"] == "vlmc_context"
 
 
-def test_legacy_vlmc_fit_behavior_is_unchanged():
-    result = vlmc_fit(
-        ["A", "B", "A", "B"],
-        max_depth=2,
-        min_count=1,
-        pruning_threshold=0.01,
-    )
+def test_vlmc_fit_metric_matches_inferred_grammar_contexts():
+    sequences = [["A", "B", "X"]] * 100 + [["C", "B", "X"]] * 100
 
-    assert set(result["context_tree"]) == {
-        ("A",),
-        ("B",),
-        ("A", "B"),
-        ("B", "A"),
-    }
+    grammar = infer_vlmc(sequences, max_depth=2, min_count=2)
+    fit = vlmc_fit(sequences, max_depth=2, min_count=2, alpha=0.05, eos="#")
+
+    assert fit["contexts"] == grammar.metadata["inference"]["contexts"]
+    assert fit["pruned_contexts"] == grammar.metadata["inference"]["pruned_contexts"]
 
 
 def test_inferred_start_probabilities_control_sampling():

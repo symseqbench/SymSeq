@@ -8,7 +8,7 @@ import numpy as np
 from joblib import Parallel, delayed
 from tqdm import tqdm
 
-from symseq.metrics.string.compression import gzip_payload_size
+from symseq.metrics.string.compression import encode_symbols, gzip_payload_size
 
 
 def hamming_distance(seq1: list[str], seq2: list[str]) -> int:
@@ -172,8 +172,17 @@ def normalized_compression_distance(seq1: list[str], seq2: list[str], compressor
     float
         NCD in [0, 1+epsilon], approximately metric.
 
+    Raises
+    ------
+    TypeError
+        If either input is not a single sequence of str symbols (e.g. a string set). Concatenate
+        string sets into one sequence first.
+
     Notes
     -----
+    Symbols are encoded as fixed-width integer ids over the alphabet shared by both sequences
+    (`encode_symbols`), so multi-character symbols are never confused with their concatenation.
+
     NCD(x,y) = [C(xy) - min(C(x), C(y))] / max(C(x), C(y))
     where C(·) is the gzip payload size in bytes. The constant gzip framing
     (header, trailer, empty block; 20 bytes) is excluded, since for short
@@ -205,13 +214,12 @@ def normalized_compression_distance(seq1: list[str], seq2: list[str], compressor
     if compressor != "gzip":
         raise NotImplementedError("Only gzip compression supported currently")
 
-    str1 = "".join(map(str, seq1))
-    str2 = "".join(map(str, seq2))
-    str_concat = str1 + str2
+    # shared alphabet, so a symbol has the same bytes in x, y and xy
+    bytes1, bytes2 = encode_symbols(seq1, seq2)
 
-    C_x = gzip_payload_size(str1.encode("utf-8"))
-    C_y = gzip_payload_size(str2.encode("utf-8"))
-    C_xy = gzip_payload_size(str_concat.encode("utf-8"))
+    C_x = gzip_payload_size(bytes1)
+    C_y = gzip_payload_size(bytes2)
+    C_xy = gzip_payload_size(bytes1 + bytes2)
 
     numerator = C_xy - min(C_x, C_y)
     denominator = max(C_x, C_y)

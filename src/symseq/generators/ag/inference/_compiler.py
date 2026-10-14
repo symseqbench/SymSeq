@@ -12,16 +12,9 @@ from typing import Any
 import numpy as np
 
 from symseq.generators.ag.artificial_grammar import ArtificialGrammar
+from symseq.metrics.grammar.vlmc import _longest_suffix
 
 from ._corpus import Context, ContextCounts
-
-
-def _longest_suffix(context: Context, candidates: set[Context]) -> Context:
-    for depth in range(len(context), -1, -1):
-        suffix = context[-depth:] if depth else ()
-        if suffix in candidates:
-            return suffix
-    raise RuntimeError("The empty fallback context is missing.")
 
 
 def _state_names(contexts: set[Context]) -> dict[Context, str]:

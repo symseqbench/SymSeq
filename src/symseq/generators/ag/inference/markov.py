@@ -5,68 +5,18 @@
 
 from __future__ import annotations
 
-from collections import Counter, defaultdict
 from collections.abc import Iterable, Sequence
 from typing import Literal
 
 import numpy as np
 
 from symseq.generators.ag.artificial_grammar import ArtificialGrammar
+from symseq.metrics.grammar._string_sets import fixed_order_counts
+from symseq.metrics.grammar.markov import markov_order_selection
 from symseq.utils.validation import is_integer
 
 from ._compiler import compile_context_grammar
-from ._corpus import Context, ContextCounts, normalize_corpus
-
-
-def _fixed_order_counts(
-    corpus: Sequence[tuple[str, ...]],
-    *,
-    order: int,
-    eos: str,
-) -> tuple[ContextCounts, Counter[str]]:
-    counts: defaultdict[Context, Counter[str]] = defaultdict(Counter)
-    starts: Counter[str] = Counter()
-
-    for sequence in corpus:
-        starts[sequence[0]] += 1
-        for index in range(len(sequence)):
-            next_symbol = sequence[index + 1] if index + 1 < len(sequence) else eos
-            counts[()][next_symbol] += 1
-            if order > 0:
-                depth = min(order, index + 1)
-                counts[sequence[index - depth + 1 : index + 1]][next_symbol] += 1
-
-    return dict(counts), starts
-
-
-def _bic_scores(
-    corpus: Sequence[tuple[str, ...]],
-    *,
-    max_order: int,
-    alphabet_size: int,
-    eos: str,
-) -> dict[int, float]:
-    n_observations = sum(len(sequence) for sequence in corpus)
-    outcome_parameters = alphabet_size  # |alphabet + EOS| - 1
-    scores: dict[int, float] = {}
-
-    for order in range(max_order + 1):
-        counts, _ = _fixed_order_counts(corpus, order=order, eos=eos)
-        fitted: ContextCounts
-        if order == 0:
-            fitted = {(): counts[()]}
-        else:
-            fitted = {context: next_counts for context, next_counts in counts.items() if context}
-        log_likelihood = 0.0
-        for next_counts in fitted.values():
-            total = sum(next_counts.values())
-            for count in next_counts.values():
-                log_likelihood += count * np.log(count / total)
-
-        n_parameters = len(fitted) * outcome_parameters
-        scores[order] = -2.0 * log_likelihood + n_parameters * np.log(n_observations)
-
-    return scores
+from ._corpus import Context, normalize_corpus
 
 
 def infer_markov(
@@ -83,8 +33,8 @@ def infer_markov(
     """Estimate a fixed-order Markov model and compile it into an ArtificialGrammar.
 
     ``order="bic"`` (or the alias ``"auto"``) selects orders from zero through
-    ``max_order`` using the Bayesian information criterion. Sequence boundaries
-    are preserved and modeled as explicit EOS outcomes.
+    ``max_order`` with :func:`symseq.metrics.grammar.markov_order_selection` (BIC,
+    ``eos=eos``). Sequence boundaries are preserved and modeled as explicit EOS outcomes.
     """
     corpus, alphabet = normalize_corpus(sequences, eos=eos)
 
@@ -92,19 +42,15 @@ def infer_markov(
     if order in {"bic", "auto"}:
         if not is_integer(max_order) or max_order < 0:
             raise ValueError("max_order must be a non-negative integer.")
-        bic_scores = _bic_scores(
-            corpus,
-            max_order=max_order,
-            alphabet_size=len(alphabet),
-            eos=eos,
-        )
-        selected_order = min(bic_scores, key=bic_scores.__getitem__)
+        selection = markov_order_selection(corpus, max_order=max_order, criterion="BIC", eos=eos)
+        bic_scores = dict(enumerate(selection["scores"]))
+        selected_order = selection["optimal_order"]
     elif is_integer(order) and order >= 0:
         selected_order = order
     else:
         raise ValueError("order must be a non-negative integer, 'bic', or 'auto'.")
 
-    counts, starts = _fixed_order_counts(corpus, order=selected_order, eos=eos)
+    counts, starts = fixed_order_counts(corpus, order=selected_order, eos=eos)
     model_contexts: set[Context]
     if selected_order == 0:
         model_contexts = {()}

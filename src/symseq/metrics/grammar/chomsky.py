@@ -9,7 +9,7 @@ from collections import Counter, defaultdict
 import numpy as np
 from tqdm import tqdm
 
-from symseq.metrics.string.compression import gzip_payload_size
+from symseq.metrics.string.compression import encode_symbols, gzip_payload_size
 
 
 def chomsky_classification(
@@ -223,7 +223,7 @@ def _detect_repetition(sequence: list[str]) -> float:
 
     for unit_length in range(1, min(len(sequence) // 2 + 1, 10)):
         for start in range(min(unit_length, len(sequence))):
-            unit = "".join(sequence[start : start + unit_length])
+            unit = tuple(sequence[start : start + unit_length])
             if not unit:
                 continue
 
@@ -232,7 +232,7 @@ def _detect_repetition(sequence: list[str]) -> float:
             i = start
             while i + unit_length <= len(sequence):
                 total_possible += 1
-                current_unit = "".join(sequence[i : i + unit_length])
+                current_unit = tuple(sequence[i : i + unit_length])
                 if current_unit == unit:
                     matches += 1
                 i += unit_length
@@ -601,9 +601,9 @@ def _estimate_kolmogorov_complexity(sequence: list[str]) -> float:
     if not sequence:
         return 0.0
 
-    string_repr = "".join(sequence)
-    original_size = len(string_repr)
-    compressed_size = gzip_payload_size(string_repr.encode("utf-8"))
+    (encoded,) = encode_symbols(sequence)
+    original_size = len(encoded)
+    compressed_size = gzip_payload_size(encoded)
 
     complexity = compressed_size / original_size if original_size > 0 else 0
     return min(complexity, 1.0)
