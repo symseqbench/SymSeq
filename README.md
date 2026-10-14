@@ -83,6 +83,33 @@ uv pip install -e ".[dev]"
 
 ---
 
+## Quick Start
+
+Generate a small symbolic trial set from the example random grammar config:
+
+```bash
+symseq validate examples/configs/random_ag.yaml
+symseq inspect examples/configs/random_ag.yaml --head 2
+symseq generate examples/configs/random_ag.yaml
+```
+
+The output path is read from `symseq.storage.path` in the config. For the example above, `generate` writes symbolic
+artifacts under `data/SymSeq/random_ag`, including `trials.jsonl`, `manifest.yaml`, and split-specific JSONL files.
+
+Use the same config directly from Python:
+
+```python
+from symseq.config import load_trial_set
+
+trial_set = load_trial_set("examples/configs/random_ag.yaml")
+
+for trial in trial_set.split("train")[:3]:
+    print(trial.symbols)
+    print(trial.targets["grammaticality"].values)
+```
+
+---
+
 ## License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.

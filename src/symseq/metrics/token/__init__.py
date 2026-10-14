@@ -9,6 +9,6 @@ occurrence and feature distributions within sequences.
 """
 
 from .duration import token_duration_stats
-from .frequency import most_common_tokens, token_frequency
+from .frequency import legal_entry, most_common_tokens, token_frequency
 
-__all__ = ['token_frequency', 'most_common_tokens', 'token_duration_stats']
+__all__ = ["legal_entry", "most_common_tokens", "token_duration_stats", "token_frequency"]

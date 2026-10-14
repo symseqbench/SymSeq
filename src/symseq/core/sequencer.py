@@ -8,10 +8,13 @@ Implements abstract/base class used to generate symbolic sequences.
 
 # standard imports
 from abc import ABC
+from collections.abc import Iterator, Mapping
+from typing import ClassVar
 
 import numpy as np
 
 # local imports
+from ..trial import Trial
 from ..utils.io import get_logger, save_pickle
 
 logger = get_logger(__name__)
@@ -22,7 +25,12 @@ class SymbolicSequencer(ABC):
     """
     Build patterned symbolic sequences.
     Contains the generic constructors to implement structured symbolic sequences
+
+    Subclasses declare guaranteed intrinsic target IDs and granularities through
+    ``intrinsic_target_granularities``.
     """
+
+    intrinsic_target_granularities: ClassVar[Mapping[str, str]] = {}
 
     def __init__(
         self,
@@ -119,6 +127,31 @@ class SymbolicSequencer(ABC):
         alphabet_arr = np.array(self.alphabet, dtype=object)  # avoid conversion to np.str_ type
         random_sequence = list(self.rng.choice(alphabet_arr, length, replace=replace))
         return random_sequence
+
+    # ============================= Trial-based API =============================
+    # Native generation: subclasses override generate_trial to emit a Trial.
+    # Generator-derived target candidates live in Trial.intrinsic_targets;
+    # configured task materialization decides which become public targets.
+
+    def generate_trial(self, **params) -> Trial:
+        """Generate one Trial. Subclasses must override."""
+        raise NotImplementedError(f"{type(self).__name__} has not implemented the Trial-based generate_trial API yet.")
+
+    def generate_trials(self, n: int, **params) -> list[Trial]:
+        """Generate n independent Trials."""
+        return [self.generate_trial(**params) for _ in range(n)]
+
+    def iter_trials(self, **params) -> Iterator[Trial]:
+        """Infinite iterator of fresh Trials (online mode)."""
+        while True:
+            yield self.generate_trial(**params)
+
+    # --- TrialSource protocol methods ---
+    def draw_trial(self, **kwargs) -> Trial:
+        return self.generate_trial(**kwargs)
+
+    def draw_batch(self, n: int, **kwargs) -> list[Trial]:
+        return self.generate_trials(n, **kwargs)
 
     def save(self, file_name=None, file_path=None):
         """

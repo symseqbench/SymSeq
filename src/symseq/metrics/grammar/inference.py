@@ -8,12 +8,13 @@ import warnings
 try:
     from nltk import CFG
     from nltk.parse import ChartParser
+
     NLTK_AVAILABLE = True
 except ImportError:
     NLTK_AVAILABLE = False
 
 
-def cyk_parse(sequence: list[str], grammar: str | None = None, start_symbol: str = 'S') -> dict:
+def cyk_parse(sequence: list[str], grammar: str | None = None, start_symbol: str = "S") -> dict:
     """
     Parse sequence using CYK algorithm via NLTK.
 
@@ -60,10 +61,7 @@ def cyk_parse(sequence: list[str], grammar: str | None = None, start_symbol: str
     True
     """
     if not NLTK_AVAILABLE:
-        raise ImportError(
-            "NLTK is required for CYK parsing. "
-            "Install with: pip install nltk"
-        )
+        raise ImportError("NLTK is required for CYK parsing. Install with: pip install nltk")
 
     if grammar is None:
         raise ValueError("Grammar must be provided")
@@ -75,18 +73,18 @@ def cyk_parse(sequence: list[str], grammar: str | None = None, start_symbol: str
         parses = list(parser.parse(sequence))
 
         return {
-            'recognized': len(parses) > 0,
-            'num_parses': len(parses),
-            'parses': parses,
+            "recognized": len(parses) > 0,
+            "num_parses": len(parses),
+            "parses": parses,
         }
 
     except Exception as e:
         warnings.warn(f"Parsing failed: {str(e)}", UserWarning)
         return {
-            'recognized': False,
-            'num_parses': 0,
-            'parses': [],
-            'error': str(e),
+            "recognized": False,
+            "num_parses": 0,
+            "parses": [],
+            "error": str(e),
         }
 
 
@@ -127,9 +125,8 @@ def scfg_inference(sequences: list[list[str]], max_iter: int = 100) -> dict:
     Computer Speech & Language, 4(1), 35-56.
     """
     warnings.warn(
-        "SCFG inference is not yet implemented. "
-        "This is a complex algorithm requiring substantial development.",
-        UserWarning
+        "SCFG inference is not yet implemented. This is a complex algorithm requiring substantial development.",
+        UserWarning,
     )
     raise NotImplementedError(
         "SCFG inference via Inside-Outside algorithm requires full implementation. "

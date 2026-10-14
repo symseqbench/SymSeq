@@ -7,16 +7,20 @@ Models n-AX (conditional one-back) as a regular grammar.
 
 from __future__ import annotations
 
-from typing import Dict, List, Optional, Sequence, Tuple
+from collections.abc import Sequence
+from typing import ClassVar
 
 import numpy as np
 
-from symseq.grammars.ag import ArtificialGrammar
+from symseq.generators.ag import ArtificialGrammar
+from symseq.generators.registry import register
+from symseq.trial import Target, Trial
 from symseq.utils.io import get_logger
 
 logging = get_logger(__name__)
 
 
+@register("nAX")
 class nAX(ArtificialGrammar):
     """
     n-AX (conditional one-back) as a regular grammar.
@@ -62,6 +66,12 @@ class nAX(ArtificialGrammar):
       The distinction is in labeling (i.e., j==i is target).
     - The grammar keeps filler states context-specific to retain context memory until the probe.
     """
+
+    intrinsic_target_granularities: ClassVar[dict[str, str]] = {
+        **ArtificialGrammar.intrinsic_target_granularities,
+        "nax_label": "per_trial",
+        "nax_is_target": "per_trial",
+    }
 
     def __init__(
         self,
@@ -110,6 +120,7 @@ class nAX(ArtificialGrammar):
             transitions=transitions,
             start_states=start_states,
             terminal_states=terminal_states,
+            start_probabilities=dict(zip(self.contexts, self.context_probs, strict=True)),
             eos=self.eos,
             rng=self.rng,
             seed=self.seed,
@@ -237,11 +248,12 @@ class nAX(ArtificialGrammar):
 
         # Cue -> Fillers or Probes
         for ctx in self.contexts:
-            self._add_cue_fanout(transitions, ctx, self.cue_map[ctx], probes)
+            self._add_context_fanout(transitions, ctx, self.cue_map[ctx])
 
         # Filler -> Filler or Probe
         for ctx in self.contexts:
-            self._add_filler_fanout(transitions, ctx, probes)
+            for filler in self.fillers:
+                self._add_context_fanout(transitions, ctx, f"{filler}({ctx})")
 
         # Probes -> EOS
         for p in probes:
@@ -249,9 +261,9 @@ class nAX(ArtificialGrammar):
 
         return transitions
 
-    def _add_cue_fanout(self, transitions: list[tuple[str, str, float]], ctx: str, cue: str, probes: set) -> None:
+    def _add_context_fanout(self, transitions: list[tuple[str, str, float]], ctx: str, source: str) -> None:
         """
-        Add transitions from a cue state to filler and probe states.
+        Add transitions from a cue or filler state to context-specific fillers or probes.
 
         Parameters
         ----------
@@ -259,49 +271,21 @@ class nAX(ArtificialGrammar):
             List to append transitions to.
         ctx : str
             Context symbol.
-        cue : str
-            Cue symbol for this context.
-        probes : set
-            Set of all probe symbols.
+        source : str
+            Source state for the transitions.
         """
-        fan = []
-        # Can go to any filler(ctx)
-        for f in self.fillers:
-            fan.append((cue, f"{f}({ctx})", 1.0))
-        # Can go to any probe (both targets and lures are grammatical)
-        for p in probes:
-            fan.append((cue, p, 1.0))
+        n_contexts = len(self.contexts)
+        n_branches = len(self.fillers) + n_contexts
+        filler_probability = 1.0 / n_branches
+        total_probe_probability = n_contexts / n_branches
 
-        w = 1.0 / len(fan) if fan else 1.0
-        for src, tgt, _ in fan:
-            transitions.append((src, tgt, w))
+        for filler in self.fillers:
+            transitions.append((source, f"{filler}({ctx})", filler_probability))
 
-    def _add_filler_fanout(self, transitions: list[tuple[str, str, float]], ctx: str, probes: set) -> None:
-        """
-        Add transitions from filler states to other fillers or probes.
-
-        Parameters
-        ----------
-        transitions : list
-            List to append transitions to.
-        ctx : str
-            Context symbol.
-        probes : set
-            Set of all probe symbols.
-        """
-        for f in self.fillers:
-            src = f"{f}({ctx})"
-            fan = []
-            # Can go to any filler(ctx)
-            for g in self.fillers:
-                fan.append((src, f"{g}({ctx})", 1.0))
-            # Can go to any probe
-            for p in probes:
-                fan.append((src, p, 1.0))
-
-            w = 1.0 / len(fan)
-            for s, t, _ in fan:
-                transitions.append((s, t, w))
+        context_idx = self._ctx_index[ctx]
+        for probe_idx, probe_context in enumerate(self.contexts):
+            probability = total_probe_probability * self.probe_given_context[context_idx, probe_idx]
+            transitions.append((source, self.probe_map[probe_context], probability))
 
     # ========================= High-level sampling =========================
 
@@ -322,41 +306,10 @@ class nAX(ArtificialGrammar):
         list of str
             A valid trial string, lure or target.
         """
-        n = len(self.contexts)
-
-        # choose context index i
-        i = int(self.rng.choice(n, p=self.context_probs))
-        ctx_i = self.contexts[i]
-        cue_i = self.cue_map[ctx_i]
-
-        max_tries = 1000
         n_fillers = kwargs.pop("n_fillers", None)
         length = 3 + n_fillers if n_fillers is not None else None
         kwargs["length_range"] = (length, length) if length is not None else None
-        string = None
-        while max_tries > 0:
-            # choose probe context j given i (from n×n matrix)
-            j = int(self.rng.choice(n, p=self.probe_given_context[i]))
-            probe_j = self.probe_map[self.contexts[j]]
-
-            max_tries_in = 100
-            while max_tries_in > 0:
-                string = super().generate_string(**kwargs)
-                if string[-1] == probe_j:
-                    break
-                max_tries_in -= 1
-
-            if max_tries_in == 0:
-                max_tries -= 1
-            else:
-                break
-
-        if max_tries == 0:
-            raise RuntimeError("Could not generate a valid trial string.")
-
-        # sanity: the underlying grammar should accept string + [eos]
-        assert self.is_grammatical(string + [self.eos]), "Internal grammar mismatch."
-        return string
+        return super().generate_string(*args, **kwargs)
 
     # TODO match signature of parent class
     def generate_string_set(self, n_samples: int = 1, **kwargs) -> list[list[str]]:
@@ -378,6 +331,24 @@ class nAX(ArtificialGrammar):
         # currently all generated strings are grammatical
         string_set = [self.generate_string(**kwargs) for _ in range(n_samples)]
         return string_set
+
+    # ============================ Trial-based API ============================
+
+    def generate_trial(self, *args, **kwargs) -> Trial:
+        """Generate one nAX Trial.
+
+        Augments the parent ArtificialGrammar Trial with nAX-specific intrinsic
+        per-trial targets:
+        - ``nax_label``: trial-type label like 'C1->T' (target) or 'C1->L(2)' (lure)
+        - ``nax_is_target``: True if probe matches the context's expected probe
+        """
+        trial = super().generate_trial(*args, **kwargs)
+        label, is_target = self.label_trial(trial.symbols)
+        trial.intrinsic_targets["nax_label"] = Target(values=label, mask=None, granularity="per_trial")
+        trial.intrinsic_targets["nax_is_target"] = Target(values=is_target, mask=None, granularity="per_trial")
+        trial.meta["paradigm"] = "nAX"
+        trial.meta["n_contexts"] = len(self.contexts)
+        return trial
 
     # ============================== Utilities ==============================
     # TODO This belongs more to the task definition
@@ -411,6 +382,6 @@ class nAX(ArtificialGrammar):
 
         i = self._ctx_index[ctx]
         if i == j:
-            return (f"C{i+1}->T", True)
+            return (f"C{i + 1}->T", True)
         else:
-            return (f"C{i+1}->L({j+1})", False)
+            return (f"C{i + 1}->L({j + 1})", False)

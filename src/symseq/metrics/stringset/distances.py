@@ -3,12 +3,12 @@
 
 """Distance metrics for string sets."""
 
-from gzip import compress
-
 import nltk
 import numpy as np
 from joblib import Parallel, delayed
 from tqdm import tqdm
+
+from symseq.metrics.string.compression import encode_symbols, gzip_payload_size
 
 
 def hamming_distance(seq1: list[str], seq2: list[str]) -> int:
@@ -100,20 +100,58 @@ def edit_distance(seq1: list[str], seq2: list[str], substitution_cost: int = 1) 
 
 def string_similarity(seq1: list[str], seq2: list[str], substitution_cost: int = 1) -> float:
     """
-    Calculate the string similarity between two sequences, defined as the edit distance divided by the length of the longest
-    sequence.
+    Calculate the similarity between two sequences based on their edit distance.
+
+    Defined as ``1 - edit_distance / max(len(seq1), len(seq2))``, so that identical sequences
+    score 1 and sequences with nothing in common score 0.
+
+    Parameters
+    ----------
+    seq1 : list of str
+        The first sequence for comparison.
+    seq2 : list of str
+        The second sequence for comparison.
+    substitution_cost : int, default=1
+        The cost of substituting a character.
+
+    Returns
+    -------
+    float
+        Similarity in [0, 1] (for ``substitution_cost <= 1``). Two empty sequences are identical (1.0).
+
+    Examples
+    --------
+    >>> string_similarity(['A', 'B', 'C'], ['A', 'B', 'C'])
+    1.0
+    >>> string_similarity(['A', 'B', 'C'], ['X', 'Y', 'Z'])
+    0.0
     """
-    return edit_distance(seq1, seq2, substitution_cost) / max(len(seq1), len(seq2))
+    longest = max(len(seq1), len(seq2))
+    if longest == 0:
+        return 1.0
+    return 1.0 - edit_distance(seq1, seq2, substitution_cost) / longest
 
 
 def average_string_similarity(seq1: list[list[str]], seq2: list[str], substitution_cost: int = 1) -> float:
     """
-    Calculate the average string similarity of `seq2` to and a list of sequences `seq1`.
+    Calculate the average string similarity of `seq2` to a list of sequences `seq1`.
+
+    Parameters
+    ----------
+    seq1 : list of list of str
+        The reference sequences (e.g. a training set).
+    seq2 : list of str
+        The sequence to compare against every sequence in `seq1`.
+    substitution_cost : int, default=1
+        The cost of substituting a character.
+
+    Returns
+    -------
+    float
+        Mean of `string_similarity` between `seq2` and each sequence in `seq1`: 1 means `seq2` is identical to every
+        reference sequence, 0 means it shares nothing with any of them.
     """
-    score = []
-    for s1 in seq1:
-        score.append(edit_distance(s1, seq2, substitution_cost) / max(len(s1), len(seq2)))
-    return np.mean(score)
+    return float(np.mean([string_similarity(s1, seq2, substitution_cost) for s1 in seq1]))
 
 
 def normalized_compression_distance(seq1: list[str], seq2: list[str], compressor: str = "gzip") -> float:
@@ -134,13 +172,29 @@ def normalized_compression_distance(seq1: list[str], seq2: list[str], compressor
     float
         NCD in [0, 1+epsilon], approximately metric.
 
+    Raises
+    ------
+    TypeError
+        If either input is not a single sequence of str symbols (e.g. a string set). Concatenate
+        string sets into one sequence first.
+
     Notes
     -----
+    Symbols are encoded as fixed-width integer ids over the alphabet shared by both sequences
+    (`encode_symbols`), so multi-character symbols are never confused with their concatenation.
+
     NCD(x,y) = [C(xy) - min(C(x), C(y))] / max(C(x), C(y))
-    where C(·) is compressed size.
+    where C(·) is the gzip payload size in bytes. The constant gzip framing
+    (header, trailer, empty block; 20 bytes) is excluded, since for short
+    strings it would otherwise dominate the measurement.
 
     Properties:
     - 0 <= NCD <= 1 + epsilon (approximately metric)
+    - Resolution is one byte. Once the framing is excluded, a highly regular
+      string compresses to only a few bytes, so concatenating even an identical
+      pair costs a noticeable fraction of that: NCD(x, x) is well above 0 for
+      short or strongly repetitive strings (e.g. 0.25 for ``['A', 'B'] * 10``).
+      Compare values between pairs of similar length rather than against 0.
     - Measures similarity based on shared information
     - Parameter-free and universal
 
@@ -152,20 +206,20 @@ def normalized_compression_distance(seq1: list[str], seq2: list[str], compressor
     Examples
     --------
     >>> seq1 = ['A', 'B'] * 10
-    >>> seq2 = ['A', 'B'] * 10
-    >>> ncd = normalized_compression_distance(seq1, seq2)
-    >>> assert ncd < 0.1
+    >>> seq2 = ['C', 'D'] * 10
+    >>> same = normalized_compression_distance(seq1, seq1)
+    >>> different = normalized_compression_distance(seq1, seq2)
+    >>> assert same < different
     """
     if compressor != "gzip":
         raise NotImplementedError("Only gzip compression supported currently")
 
-    str1 = "".join(map(str, seq1))
-    str2 = "".join(map(str, seq2))
-    str_concat = str1 + str2
+    # shared alphabet, so a symbol has the same bytes in x, y and xy
+    bytes1, bytes2 = encode_symbols(seq1, seq2)
 
-    C_x = len(compress(str1.encode("utf-8")))
-    C_y = len(compress(str2.encode("utf-8")))
-    C_xy = len(compress(str_concat.encode("utf-8")))
+    C_x = gzip_payload_size(bytes1)
+    C_y = gzip_payload_size(bytes2)
+    C_xy = gzip_payload_size(bytes1 + bytes2)
 
     numerator = C_xy - min(C_x, C_y)
     denominator = max(C_x, C_y)
@@ -180,7 +234,7 @@ def _compute_pair(i, j, string_set, dist_func, kwargs):
     """Compute single pairwise distance (helper for parallelization)."""
     try:
         return i, j, dist_func(string_set[i], string_set[j], **kwargs)
-    except Exception:
+    except ValueError:
         return i, j, np.nan
 
 

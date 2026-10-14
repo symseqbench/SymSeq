@@ -6,7 +6,7 @@ Comprehensive test suite for the NBack class.
 
 import pytest
 import numpy as np
-from symseq.grammars.nback import NBack
+from symseq.generators.nback import NBack
 
 
 class TestInitialization:
@@ -45,8 +45,11 @@ class TestInitialization:
 
     def test_p_lure_dict(self):
         gen = NBack(
-            n=2, seq_length=30, lure_offsets=(-1, 1),
-            p_lure={-1: 0.05, 1: 0.15}, seed=1,
+            n=2,
+            seq_length=30,
+            lure_offsets=(-1, 1),
+            p_lure={-1: 0.05, 1: 0.15},
+            seed=1,
         )
         assert gen.p_lure == {-1: 0.05, 1: 0.15}
 
@@ -117,8 +120,12 @@ class TestInitialization:
         # 30 - 2 = 28 eligible positions; demand > that
         with pytest.raises(ValueError, match="Cannot fit"):
             NBack(
-                n=2, seq_length=30, p_match=0.9,
-                lure_offsets=(1,), p_lure=0.5, seed=1,
+                n=2,
+                seq_length=30,
+                p_match=0.9,
+                lure_offsets=(1,),
+                p_lure=0.5,
+                seed=1,
             )
 
 
@@ -133,8 +140,7 @@ class TestGeneration:
         assert all(isinstance(s, str) for s in seq)
 
     def test_generated_symbols_in_alphabet(self):
-        gen = NBack(n=2, seq_length=50, alphabet=["X", "Y", "Z"],
-                    avoid_accidental_matches=False, p_match=0.0, seed=1)
+        gen = NBack(n=2, seq_length=50, alphabet=["X", "Y", "Z"], avoid_accidental_matches=False, p_match=0.0, seed=1)
         seq = gen.generate_string()
         assert set(seq) <= {"X", "Y", "Z"}
 
@@ -148,8 +154,12 @@ class TestGeneration:
     def test_match_rate_exact_round_mode(self):
         """With round mode, every sequence must have exactly the intended count."""
         gen = NBack(
-            n=2, seq_length=100, alphabet_size=8, p_match=0.3,
-            match_count_mode="round", seed=123,
+            n=2,
+            seq_length=100,
+            alphabet_size=8,
+            p_match=0.3,
+            match_count_mode="round",
+            seed=123,
         )
         intended = round(0.3 * 98)
         for _ in range(50):
@@ -175,10 +185,15 @@ class TestGeneration:
         # Use a large alphabet and sparse lures so the retry loop reliably finds
         # an allocation with no constraint conflicts.
         gen = NBack(
-            n=2, seq_length=100, alphabet_size=20,
-            p_match=0.1, lure_offsets=(-1, 1), p_lure=0.05,
+            n=2,
+            seq_length=100,
+            alphabet_size=20,
+            p_match=0.1,
+            lure_offsets=(-1, 1),
+            p_lure=0.05,
             avoid_accidental_lures=True,
-            match_count_mode="round", seed=321,
+            match_count_mode="round",
+            seed=321,
         )
         intended_match = round(0.1 * 98)
         intended_lure_neg1 = round(0.05 * (100 - 2))
@@ -194,8 +209,13 @@ class TestGeneration:
     def test_no_lure_doubles_as_match(self):
         """Designated lure positions must not satisfy the n-back rule."""
         gen = NBack(
-            n=2, seq_length=50, alphabet_size=4,
-            p_match=0.2, lure_offsets=(1,), p_lure=0.1, seed=5,
+            n=2,
+            seq_length=50,
+            alphabet_size=4,
+            p_match=0.2,
+            lure_offsets=(1,),
+            p_lure=0.1,
+            seed=5,
         )
         for _ in range(100):
             seq = gen.generate_string()
@@ -207,8 +227,12 @@ class TestGeneration:
     def test_avoid_accidental_matches(self):
         """With avoid_accidental_matches=True and p_match=0, no matches anywhere."""
         gen = NBack(
-            n=2, seq_length=200, alphabet_size=4,
-            p_match=0.0, avoid_accidental_matches=True, seed=11,
+            n=2,
+            seq_length=200,
+            alphabet_size=4,
+            p_match=0.0,
+            avoid_accidental_matches=True,
+            seed=11,
         )
         for _ in range(20):
             seq = gen.generate_string()
@@ -217,9 +241,14 @@ class TestGeneration:
     def test_avoid_accidental_lures(self):
         """When avoid_accidental_lures=True, no extra lures beyond intended."""
         gen = NBack(
-            n=2, seq_length=80, alphabet_size=10,
-            p_match=0.2, lure_offsets=(1,), p_lure=0.1,
-            avoid_accidental_lures=True, seed=99,
+            n=2,
+            seq_length=80,
+            alphabet_size=10,
+            p_match=0.2,
+            lure_offsets=(1,),
+            p_lure=0.1,
+            avoid_accidental_lures=True,
+            seed=99,
         )
         intended_lure = round(0.1 * (80 - 3))
         for _ in range(20):
@@ -241,8 +270,7 @@ class TestLabeling:
     def test_label_sequence_correctness(self):
         # Hand-built sequence: n=2, length 6
         seq = ["A", "B", "A", "C", "A", "C"]
-        gen = NBack(n=2, seq_length=6, alphabet=["A", "B", "C"],
-                    p_match=0.0, avoid_accidental_matches=False, seed=1)
+        gen = NBack(n=2, seq_length=6, alphabet=["A", "B", "C"], p_match=0.0, avoid_accidental_matches=False, seed=1)
         labels = gen.label_sequence(seq)
         # positions 0,1 -> -1; pos 2: A==A -> 1; pos 3: C!=B -> 0; pos 4: A==A -> 1; pos 5: C==C -> 1
         np.testing.assert_array_equal(labels, np.array([-1, -1, 1, 0, 1, 1], dtype=np.int8))
@@ -252,9 +280,15 @@ class TestLabeling:
         seq = ["A", "B", "C", "A", "D", "B"]
         # pos 2: C!=A; pos 3: A!=B, but A==seq[3-3]=A -> lure (code 2)
         # pos 4: D!=C; pos 5: B!=D, but B==seq[5-3]=A? no A!=B; check seq[5-2]=D? no
-        gen = NBack(n=2, seq_length=6, alphabet=["A", "B", "C", "D"],
-                    p_match=0.0, lure_offsets=(1,),
-                    avoid_accidental_matches=False, seed=1)
+        gen = NBack(
+            n=2,
+            seq_length=6,
+            alphabet=["A", "B", "C", "D"],
+            p_match=0.0,
+            lure_offsets=(1,),
+            avoid_accidental_matches=False,
+            seed=1,
+        )
         mc = gen.label_sequence_multiclass(seq)
         assert mc[3] == 2  # (n+1)-back lure
         assert mc[2] == 0
@@ -266,9 +300,15 @@ class TestLabeling:
         # Position satisfying both match and lure: match wins
         # n=1, lure_offsets=(1,) -> lag = 2; sequence A A A:
         # pos 1: A==A (match) -> 1; pos 2: A==A (match) AND A==A (lure) -> 1 (match wins)
-        gen = NBack(n=1, seq_length=3, alphabet=["A", "B"],
-                    p_match=0.0, lure_offsets=(1,),
-                    avoid_accidental_matches=False, seed=1)
+        gen = NBack(
+            n=1,
+            seq_length=3,
+            alphabet=["A", "B"],
+            p_match=0.0,
+            lure_offsets=(1,),
+            avoid_accidental_matches=False,
+            seed=1,
+        )
         seq = ["A", "A", "A"]
         mc = gen.label_sequence_multiclass(seq)
         assert mc[1] == 1
@@ -295,9 +335,7 @@ class TestReproducibility:
         gen1 = NBack(n=2, seq_length=30, alphabet_size=6, seed=1)
         gen2 = NBack(n=2, seq_length=30, alphabet_size=6, seed=2)
         # extremely unlikely collision over 5 sequences
-        diffs = sum(
-            gen1.generate_string() != gen2.generate_string() for _ in range(5)
-        )
+        diffs = sum(gen1.generate_string() != gen2.generate_string() for _ in range(5))
         assert diffs >= 1
 
 
@@ -339,26 +377,38 @@ class TestSeqLengthOverride:
             gen.generate_string(seq_length=0)
 
     def test_override_empty_lure_window_raises(self):
-        gen = NBack(n=2, seq_length=30, alphabet_size=8,
-                    lure_offsets=(5,), p_lure=0.05, seed=1)
+        gen = NBack(n=2, seq_length=30, alphabet_size=8, lure_offsets=(5,), p_lure=0.05, seed=1)
         with pytest.raises(ValueError, match="empty eligible window"):
             gen.generate_string(seq_length=6)
 
     def test_override_capacity_overflow_raises(self):
-        gen = NBack(n=2, seq_length=100, alphabet_size=8,
-                    p_match=0.9, seed=1)
+        gen = NBack(n=2, seq_length=100, alphabet_size=8, p_match=0.9, seed=1)
         # capacity OK at L=100 (0.9 * 98 = 88 <= 98) but overflows at L=5
         # (0.9 * 3 = 3 matches; alone fits but combined with lures...).
         # Use a config that overflows at the override:
-        gen2 = NBack(n=2, seq_length=100, alphabet_size=8,
-                     p_match=0.5, lure_offsets=(1,), p_lure=0.5,
-                     match_count_mode="round", seed=1)
+        gen2 = NBack(
+            n=2,
+            seq_length=100,
+            alphabet_size=8,
+            p_match=0.5,
+            lure_offsets=(1,),
+            p_lure=0.5,
+            match_count_mode="round",
+            seed=1,
+        )
         # default L=100: 0.5*98=49 matches + 0.5*97=48 lures = 97 <= 98 ✓
         # override L=10: 0.5*8=4 matches + 0.5*7=3 (round half-even = 4) lures
         # 4+4=8 vs 8 eligible — actually fits. Build a case that doesn't:
-        gen3 = NBack(n=2, seq_length=100, alphabet_size=8,
-                     p_match=0.99, lure_offsets=(1,), p_lure=0.0,
-                     match_count_mode="round", seed=1)
+        gen3 = NBack(
+            n=2,
+            seq_length=100,
+            alphabet_size=8,
+            p_match=0.99,
+            lure_offsets=(1,),
+            p_lure=0.0,
+            match_count_mode="round",
+            seed=1,
+        )
         # L=4: window=2, n_match=round(0.99*2)=2, but lures need window=1
         # Actually lure window is L - max(n, n+k) = 4 - 3 = 1 (non-empty).
         # n_match=2 alone fits in window of 2. Hmm.
@@ -404,11 +454,121 @@ class TestEdgeCases:
 
     def test_sample_mode_runs(self):
         gen = NBack(
-            n=2, seq_length=100, alphabet_size=8, p_match=0.3,
-            match_count_mode="sample", seed=42,
+            n=2,
+            seq_length=100,
+            alphabet_size=8,
+            p_match=0.3,
+            match_count_mode="sample",
+            seed=42,
         )
         seq = gen.generate_string()
         labels = gen.label_sequence(seq)
         # not deterministic, just check it produced something sensible
         n_match = int((labels == 1).sum())
         assert 0 <= n_match <= 98
+
+
+class TestTrialAPI:
+    """Tests for the Trial-based API (generate_trial / draw_trial)."""
+
+    def test_generate_trial_returns_trial(self):
+        from symseq.trial import Trial, Target
+
+        gen = NBack(n=2, seq_length=20, alphabet_size=6, seed=42)
+        trial = gen.generate_trial()
+        assert isinstance(trial, Trial)
+        assert len(trial.symbols) == 20
+        assert all(s in gen.alphabet for s in trial.symbols)
+        assert trial.states is None
+        assert isinstance(trial.intrinsic_targets["nback_match"], Target)
+        assert isinstance(trial.intrinsic_targets["nback_role"], Target)
+
+    def test_intrinsic_targets_present(self):
+        gen = NBack(n=2, seq_length=20, alphabet_size=6, seed=42)
+        trial = gen.generate_trial()
+        assert set(trial.intrinsic_targets) == {"nback_match", "nback_role"}
+        for tgt in trial.intrinsic_targets.values():
+            assert tgt.granularity == "per_token"
+            assert len(tgt.values) == len(trial.symbols)
+            assert len(tgt.mask) == len(trial.symbols)
+
+    def test_burn_in_positions_masked(self):
+        gen = NBack(n=3, seq_length=20, alphabet_size=6, seed=42)
+        trial = gen.generate_trial()
+        mask = trial.intrinsic_targets["nback_match"].mask
+        # positions 0..n-1 are burn-in; mask is False there
+        assert mask[:3] == [False, False, False]
+        # positions n.. are valid
+        assert all(mask[3:])
+        # burn-in values are None
+        assert trial.intrinsic_targets["nback_match"].values[:3] == [None, None, None]
+
+    def test_nback_match_target_consistency_with_label_sequence(self):
+        gen = NBack(n=2, seq_length=20, alphabet_size=6, seed=42)
+        trial = gen.generate_trial()
+        legacy = gen.label_sequence(trial.symbols)
+        for i, v in enumerate(trial.intrinsic_targets["nback_match"].values):
+            if v is None:
+                assert legacy[i] == -1
+            else:
+                assert v == int(legacy[i])
+
+    def test_meta_carries_paradigm_info(self):
+        gen = NBack(n=2, seq_length=20, alphabet_size=6, seed=42, lure_offsets=(1,), p_lure=0.1)
+        trial = gen.generate_trial()
+        assert trial.meta["paradigm"] == "NBack"
+        assert trial.meta["n"] == 2
+        assert trial.meta["seq_length"] == 20
+        assert trial.meta["lure_offsets"] == (1,)
+
+    def test_seq_length_override(self):
+        gen = NBack(n=2, seq_length=20, alphabet_size=8, seed=42)
+        trial = gen.generate_trial(seq_length=50)
+        assert len(trial.symbols) == 50
+        assert len(trial.intrinsic_targets["nback_match"].values) == 50
+
+    def test_generate_trials_batch(self):
+        from symseq.trial import Trial
+
+        gen = NBack(n=2, seq_length=15, alphabet_size=6, seed=42)
+        trials = gen.generate_trials(n=4)
+        assert len(trials) == 4
+        assert all(isinstance(t, Trial) for t in trials)
+        assert all(len(t.symbols) == 15 for t in trials)
+
+    def test_draw_trial_and_draw_batch_protocol(self):
+        from symseq.trial import Trial
+        from symseq.trial_source import TrialSource
+
+        gen = NBack(n=2, seq_length=15, alphabet_size=6, seed=42)
+        assert isinstance(gen, TrialSource)
+        t = gen.draw_trial()
+        assert isinstance(t, Trial)
+        batch = gen.draw_batch(3)
+        assert len(batch) == 3 and all(isinstance(b, Trial) for b in batch)
+
+    def test_iter_trials_yields_trials(self):
+        from itertools import islice
+        from symseq.trial import Trial
+
+        gen = NBack(n=2, seq_length=15, alphabet_size=6, seed=42)
+        first_five = list(islice(gen.iter_trials(), 5))
+        assert len(first_five) == 5
+        assert all(isinstance(t, Trial) for t in first_five)
+
+    def test_same_seed_reproducible_trial(self):
+        gen1 = NBack(n=2, seq_length=20, alphabet_size=6, seed=2026)
+        gen2 = NBack(n=2, seq_length=20, alphabet_size=6, seed=2026)
+        t1 = gen1.generate_trial()
+        t2 = gen2.generate_trial()
+        assert t1.symbols == t2.symbols
+        assert t1.intrinsic_targets["nback_match"].values == t2.intrinsic_targets["nback_match"].values
+
+    def test_registry_builds_nback(self):
+        from symseq.generators.registry import build, registered_names
+        from symseq.trial import Trial
+
+        assert "NBack" in registered_names()
+        gen = build("NBack", n=2, seq_length=15, alphabet_size=6, seed=42, verbose=False)
+        assert isinstance(gen, NBack)
+        assert isinstance(gen.generate_trial(), Trial)

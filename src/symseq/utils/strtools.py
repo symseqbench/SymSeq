@@ -1,11 +1,12 @@
 # SPDX-License-Identifier: MIT
 # Copyright (c) 2025-present, symseq Contributors
 
+from __future__ import annotations
+
 import copy
 from collections import Counter
 
 import numpy as np
-import pandas as pd
 
 from symseq.core.state import State
 
@@ -198,7 +199,7 @@ def chunk_ngrams_string_set(string_set: list[list[str]], n: int) -> dict:
     return dict(ngram_freqs)
 
 
-def chunk_ngrams_string(sequence: list[str], n: int) -> tuple[list[list[str]], list[str]]:
+def chunk_ngrams_string(sequence: list[str], n: int) -> tuple[list[tuple[str, ...]], list[tuple[str, ...]]]:
     """
     Generates n-grams from a sequence and determines their unique occurrences.
 
@@ -214,26 +215,29 @@ def chunk_ngrams_string(sequence: list[str], n: int) -> tuple[list[list[str]], l
 
     Returns
     -------
-    all_ngrams : list of list of str
-        List of all n-grams from the sequence.
-    unique_ngrams : list of list
-        List of unique n-grams.
+    all_ngrams : list of tuple of str
+        List of all n-grams from the sequence, in order of occurrence.
+    unique_ngrams : list of tuple of str
+        List of unique n-grams, in order of first occurrence.
+
+    Notes
+    -----
+    N-grams are tuples of symbols rather than concatenated strings, so symbols of more than
+    one character (e.g. indexed grammar states such as ``"A(1)"``) cannot produce colliding
+    n-grams: ``('A', 'BC')`` and ``('AB', 'C')`` stay distinct.
 
     Examples
     --------
-    >>> chunk_ngrams(['a', 'b', 'c', 'd'], 2)
-    (['ab', 'bc', 'cd'], ['ab', 'bc', 'cd'])
-
-    >>> chunk_ngrams('abc', 2)
-    (['ab', 'bc'], ['ab', 'bc'])
+    >>> chunk_ngrams_string(['a', 'b', 'c', 'd'], 2)
+    ([('a', 'b'), ('b', 'c'), ('c', 'd')], [('a', 'b'), ('b', 'c'), ('c', 'd')])
     """
     seq_list = list(sequence)
     seq_size = len(seq_list)
     if seq_size < n:
         return [], []
 
-    all_ngrams = ["".join(seq_list[ii : ii + n]) for ii in range(seq_size - n + 1)]
-    unique_ngrams = list(set(all_ngrams))
+    all_ngrams = [tuple(seq_list[ii : ii + n]) for ii in range(seq_size - n + 1)]
+    unique_ngrams = list(dict.fromkeys(all_ngrams))
 
     return all_ngrams, unique_ngrams
 
@@ -258,29 +262,27 @@ def chunk_transitions(
 
     Returns
     -------
-    np.ndarray
-        Transition matrix.
+    np.ndarray or pd.DataFrame
+        Binary transition matrix over the unique n-grams, in order of first occurrence. Rows and
+        columns of the DataFrame are labelled with the n-gram symbols joined by a space.
+
+    Raises
+    ------
+    ValueError
+        If the sequence is shorter than `chunk_len`.
 
     """
     all_ngrams, unique_ngrams = chunk_ngrams_string(sequence, chunk_len)
-    assert (
-        len(np.unique([len(x) for x in unique_ngrams])) == 1
-    ), f"All unique n-grams must have the same length n={chunk_len}!"
-    assert len(np.unique([len(x) for x in all_ngrams])) == 1, f"All n-grams must have the same length n={chunk_len}!"
-
-    unique_ngrams = np.array(unique_ngrams)
-    all_ngrams = np.array(all_ngrams)
+    if not all_ngrams:
+        raise ValueError(f"Sequence is shorter than chunk_len={chunk_len}.")
 
     Mfast_lin = np.zeros((len(unique_ngrams), len(unique_ngrams)))
 
     # precalculate indices for each unique n_gram
     un_ngram_dict_to_idx = {ngram: i for i, ngram in enumerate(unique_ngrams)}
     # O(len(all_ngrams)) - linear
-    for idx, src_ngram in enumerate(all_ngrams[:-1]):
-        tgt_ngram = all_ngrams[idx + 1]
-        j = un_ngram_dict_to_idx[tgt_ngram]
-        i = un_ngram_dict_to_idx[src_ngram]
-        Mfast_lin[i, j] = 1.0
+    for src_ngram, tgt_ngram in zip(all_ngrams[:-1], all_ngrams[1:]):
+        Mfast_lin[un_ngram_dict_to_idx[src_ngram], un_ngram_dict_to_idx[tgt_ngram]] = 1.0
 
     # # Runtime O(n^2)
     # for ii, ngram_i in enumerate(un_ngrams):
@@ -293,11 +295,19 @@ def chunk_transitions(
     # 		M[ii, jj] = float(any(all_ngrams[np.where(all_ngrams[:-1] == ngram_i)[0] + 1] == ngram_j))
     # assert np.array_equal(M, Mfast_lin)
 
-    df = pd.DataFrame(Mfast_lin, columns=unique_ngrams, index=unique_ngrams)
-
-    if verbose:
-        print(df)
-
+    if verbose or as_dataframe:
+        try:
+            import pandas as pd
+        except ImportError as exc:
+            raise ImportError(
+                "pandas is required for chunk_transitions display/DataFrame output. "
+                "Install symseq with the analysis extra: pip install 'symseq[analysis]'."
+            ) from exc
+        # labels are for display only; the matrix itself is indexed by the (collision-free) tuples
+        labels = [" ".join(ngram) for ngram in unique_ngrams]
+        df = pd.DataFrame(Mfast_lin, columns=labels, index=labels)
+        if verbose:
+            print(df)
     if as_dataframe:
         return df
     else:

@@ -6,7 +6,7 @@ import os
 import pickle as pkl
 
 
-def get_logger(name):
+def get_logger(name: str) -> logging.Logger:
     """
     Return a logger object with the specified name.
 
@@ -17,14 +17,10 @@ def get_logger(name):
 
     Returns
     -------
-    logger_ : logging.Logger
+    logging.Logger
         The logger object.
-
     """
-    logging.basicConfig(format="[%(filename)s:%(lineno)d - %(levelname)s] %(message)s", level=logging.INFO)
-    logger_ = logging.getLogger(name)
-
-    return logger_
+    return logging.getLogger(name)
 
 
 def save_pickle(obj, file_name, file_path):

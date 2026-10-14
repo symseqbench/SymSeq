@@ -1,21 +1,33 @@
 # SPDX-License-Identifier: MIT
 # Copyright (c) 2025-present, symseq Contributors
 
-"""Shannon entropy and related metrics with robust finite-sample handling."""
+"""Empirical entropy and finite-order estimates with explicit sampling diagnostics."""
 
-import warnings
 from collections import Counter
-from typing import Dict, List, Optional, Tuple, Union
 
 import numpy as np
+
+from symseq.utils.io import get_logger
+from symseq.utils.validation import is_integer, is_real
+
+logger = get_logger(__name__)
+
+# Runtime ceiling for automatic order selection; fixed orders are not silently capped.
+_MAX_ORDER_HARD_CAP = 30
+# Average observations per observed context required by the heuristic sampling screen.
+_DEFAULT_MIN_OBS_PER_CONTEXT = 5.0
+# Threshold for the first-order bias approximation, not a bound on actual error.
+_DEFAULT_BIAS_TOLERANCE = 0.05
+# Saturation-detection methods accepted by detect_saturation_point and the ensemble
+_SATURATION_METHODS = ("adaptive", "relative", "statistical", "hybrid")
 
 
 def entropy(sequence: list[str], bias_correction: bool = True) -> float:
     """
     Calculate Shannon entropy with Miller-Madow bias correction.
-    
+
     Works well for N >= 50. For N < 50, use with caution.
-    
+
     Parameters
     ----------
     sequence : list of str
@@ -37,12 +49,12 @@ def entropy(sequence: list[str], bias_correction: bool = True) -> float:
     Bias Correction:
     For finite sequences, the empirical entropy H_emp systematically underestimates
     the true entropy. The Miller-Madow correction adds a first-order bias term:
-    
+
     H_corrected = H_emp + (M - 1) / (2 * N * ln(2))
-    
+
     where M is the number of observed symbols and N is the sequence length.
     This correction is particularly important for N < 500.
-    
+
     Reference: Miller (1955), Paninski (2003), Lesne et al. (2009)
 
     Properties:
@@ -75,7 +87,7 @@ def entropy(sequence: list[str], bias_correction: bool = True) -> float:
 def block_entropy(sequence: list[str], block_size: int, bias_correction: bool = False) -> float:
     """
     Compute block entropy H_L with optional bias correction.
-    
+
     Parameters
     ----------
     sequence : list of str
@@ -85,7 +97,7 @@ def block_entropy(sequence: list[str], block_size: int, bias_correction: bool = 
     bias_correction : bool, default=False
         Apply bias correction. WARNING: Can over-correct for large L.
         Recommend False for L > 3.
-    
+
     Returns
     -------
     float
@@ -96,6 +108,9 @@ def block_entropy(sequence: list[str], block_size: int, bias_correction: bool = 
     H_L(S) = -sum(P(g) * log2(P(g)))
     where g are all L-gram blocks in S.
 
+    Blocks are tuples of symbols, so multi-character symbols never merge
+    (``['AB', 'C']`` and ``['A', 'BC']`` are different blocks).
+
     Properties:
     - H_L(S) increases with L up to saturation
     - For i.i.d. sequences: H_L(S) = L * H(S)
@@ -105,250 +120,527 @@ def block_entropy(sequence: list[str], block_size: int, bias_correction: bool = 
         return 0.0
 
     # Create L-grams
-    blocks = tuple(
-        "".join(sequence[i : i + block_size])
-        for i in range(n - block_size + 1)
-    )
+    blocks = [tuple(sequence[i : i + block_size]) for i in range(n - block_size + 1)]
 
     # Use entropy() function for consistency
-    return entropy(list(blocks), bias_correction=bias_correction)
+    return entropy(blocks, bias_correction=bias_correction)
 
 
-def entropy_rate(sequence: list[str],
-                 max_block_size: int,
-                 method: str = 'incremental',
-                 min_block_size: int = 2) -> float:
+def _validate_emc_order(order: int | str) -> None:
+    if order != "bic" and not (is_integer(order) and order >= 0):
+        raise ValueError(f"order must be 'bic' or a non-negative integer, got {order!r}.")
+
+
+def _max_order_from_block_size(max_block_size: int) -> int:
+    if not (is_integer(max_block_size) and max_block_size >= 1):
+        raise ValueError(f"max_block_size must be a positive integer, got {max_block_size!r}.")
+    return int(max_block_size) - 1
+
+
+def _empirical_entropy(counts: Counter, total: int) -> float:
+    p = np.fromiter(counts.values(), dtype=float) / total
+    return float(-np.sum(p * np.log2(p)))
+
+
+def _block_stats(sequence: list[str], max_block_size: int) -> tuple[list[float], list[float], list[int], list[int]]:
     """
-    Estimate entropy rate h_μ using robust convergence detection.
-    
+    Block statistics for L = 0..max_block_size, in bits.
+
+    Returns ``(H, h_cond, K, n)``, each indexed by block length L:
+
+    - ``H[L]``: plug-in block entropy, as `block_entropy` without bias correction.
+    - ``h_cond[L]``: plug-in conditional entropy of the last symbol of an L-block given its first
+      L - 1 symbols, from the L-blocks alone. It equals H_L - H_{L-1} up to
+      finite-window edge terms, but is never negative and is exactly 0 for a deterministic continuation.
+    - ``K[L]``: number of distinct L-blocks observed.
+    - ``n[L]``: number of L-block windows, ``len(sequence) - L + 1``.
+
+    L = 0 is the empty block: H_0 = 0, one distinct block, ``len(sequence)`` windows; h_cond[0]
+    is undefined (NaN).
+    """
+    N = len(sequence)
+    H, h_cond, K, n = [0.0], [np.nan], [1], [N]
+    for L in range(1, max_block_size + 1):
+        total = N - L + 1
+        counts = Counter(tuple(sequence[i : i + L]) for i in range(total))
+        prefixes = Counter()
+        for block, count in counts.items():
+            prefixes[block[:-1]] += count
+        H.append(_empirical_entropy(counts, total))
+        h_cond.append(max(0.0, H[-1] - _empirical_entropy(prefixes, total)))
+        K.append(len(counts))
+        n.append(total)
+    return H, h_cond, K, n
+
+
+def _bic_scores(sequence: list[str], max_order: int) -> dict[int, float]:
+    """
+    BIC score of the order-R Markov fit for R = 0..max_order (lower is better).
+
+    Every order is scored on the same ``len(sequence) - max_order`` positions (those with at least
+    `max_order` predecessors), so the likelihoods are comparable across orders.
+    """
+    alphabet_size = len(set(sequence))
+    n_obs = len(sequence) - max_order
+    windows = Counter(tuple(sequence[i : i + max_order + 1]) for i in range(n_obs))
+    scores = {}
+    for R in range(max_order + 1):
+        blocks, contexts = Counter(), Counter()
+        for window, count in windows.items():
+            block = window[max_order - R :]  # the scored symbol and its R predecessors
+            blocks[block] += count
+            contexts[block[:-1]] += count
+        h_bits = _empirical_entropy(blocks, n_obs) - _empirical_entropy(contexts, n_obs)
+        neg2_loglik = 2.0 * np.log(2) * n_obs * max(0.0, h_bits)
+        n_parameters = len(contexts) * (alphabet_size - 1)
+        scores[R] = float(neg2_loglik + n_parameters * np.log(n_obs))
+    return scores
+
+
+def _validate_emc_settings(order, max_order, bias_tolerance, min_obs_per_context) -> None:
+    """Validate estimator settings before computing or filtering any sequences."""
+    _validate_emc_order(order)
+    if max_order is not None and not (is_integer(max_order) and max_order >= 0):
+        raise ValueError("max_order must be None or a non-negative integer.")
+    for name, value, allow_zero in (
+        ("bias_tolerance", bias_tolerance, True),
+        ("min_obs_per_context", min_obs_per_context, False),
+    ):
+        if not is_real(value) or not np.isfinite(value) or value < 0 or (value == 0 and not allow_zero):
+            bound = "non-negative" if allow_zero else "positive"
+            raise ValueError(f"{name} must be finite and {bound}.")
+
+
+def _sampling_order_limit(sequence: list[str], cap: int, minimum: float) -> int:
+    """Return the last order in the contiguous range passing the sampling screen.
+
+    Contexts are prefixes of observed (R+1)-blocks, so each has a following symbol.
+    Stop at the first failing order. Return -1 if even order zero fails. This is a
+    heuristic screening policy, not a bound on estimable memory or independent data.
+    """
+    for R in range(cap + 1):
+        n = len(sequence) - R
+        contexts = {tuple(sequence[i : i + R]) for i in range(n)}
+        if n / len(contexts) < minimum:
+            return R - 1
+    return cap
+
+
+def _estimate_emc(
+    sequence: list[str],
+    order: int | str,
+    max_order: int | None,
+    bias_tolerance: float,
+    min_obs_per_context: float,
+    extra_blocks: int = 0,
+) -> dict:
+    """Compute the shared result, allowing unavailable fixed orders in ensemble records.
+
+    Extra block statistics support curves and saturation independently of the EMC
+    sampling screen. Public callers validate arguments before entering this core.
+    """
+    N = len(sequence)
+    fixed = order != "bic"
+    requested_cap = _MAX_ORDER_HARD_CAP if max_order is None else int(max_order)
+    cap = min(requested_cap, _MAX_ORDER_HARD_CAP, N - 2)
+    # Fixed orders bypass search caps but still receive a sampling diagnostic.
+    screen_cap = min(int(order), N - 2) if fixed else cap
+    sampling_limit = _sampling_order_limit(sequence, screen_cap, min_obs_per_context)
+    search_limit = None if fixed else sampling_limit
+    reasons = []
+    if not fixed:
+        if cap == _MAX_ORDER_HARD_CAP:
+            reasons.append("runtime_cap")
+        if max_order is not None and cap == max_order:
+            reasons.append("caller_cap")
+        if cap == N - 2:
+            reasons.append("sequence_length")
+        if sampling_limit < cap:
+            reasons.append("sampling_screen")
+
+    scores = None
+    R = None
+    status = "computed"
+    warnings = []
+    if fixed:
+        if order > N - 2:
+            status = "insufficient_data"
+            warnings.append("fixed_order_unavailable")
+        else:
+            R = int(order)
+            if sampling_limit < R:
+                status = "sparse"
+                warnings.append("sampling_screen_failed")
+    elif sampling_limit < 1 and not (max_order == 0 and sampling_limit == 0):
+        status = "insufficient_data"
+        warnings.append("insufficient_order_comparison")
+    else:
+        scores = _bic_scores(sequence, sampling_limit)
+        R = min(scores, key=scores.__getitem__)
+
+    needed = (R + 1) if fixed and R is not None else max(1, sampling_limit + 1)
+    H, h_cond, K, n = _block_stats(sequence, min(N, max(needed, extra_blocks, 1)))
+    result = {
+        "entropy": float(H[1]),
+        "entropy_method": "empirical",
+        "bias_correction": False,
+        "entropy_rate": None,
+        "emc": None,
+        "order": R,
+        "requested_order": int(order) if fixed else "bic",
+        "order_method": "fixed" if fixed else "bic",
+        "bic_variant": None if fixed else "observed_contexts",
+        "bic_scores": scores,
+        "n_symbols": N,
+        "max_order_requested": None if max_order is None else int(max_order),
+        "max_order_searched": sampling_limit if scores is not None else None,
+        "search_order_limit": search_limit,
+        "sampling_order_limit": sampling_limit,
+        "search_limit_reasons": reasons,
+        "n_scored": N - sampling_limit if scores is not None else None,
+        "order_at_search_limit": sampling_limit == R if scores is not None else None,
+        "min_obs_per_context": float(min_obs_per_context),
+        "emc_bias_estimate": None,
+        "entropy_rate_bias_estimate": None,
+        "bias_ok": None,
+        "bias_tolerance": float(bias_tolerance),
+        "status": status,
+        "warnings": warnings,
+        "limitations": [
+            "sampling_uncertainty_not_quantified",
+            "dependence_not_assessed",
+            "truncation_not_assessed",
+            "asymptotic_convergence_not_established",
+        ],
+        "units": {"entropy": "bits", "entropy_rate": "bits/symbol", "emc": "bits"},
+        "block_entropies": H[1:],
+        "conditional_entropies": h_cond[1:],
+    }
+    if R is None:
+        return result
+
+    rate = float(h_cond[R + 1])
+    raw_emc = float(H[R] - R * rate)
+
+    def empirical_bias(L):
+        return -(K[L] - 1) / (2.0 * n[L] * np.log(2))
+
+    # Match the prefix support and denominator to the conditional-entropy sample.
+    # A deterministic continuation then has zero conditional bias approximation.
+    prefix_count = len({tuple(sequence[i : i + R]) for i in range(n[R + 1])})
+    rate_bias = float(-(K[R + 1] - prefix_count) / (2.0 * n[R + 1] * np.log(2)))
+    emc_bias = float(empirical_bias(R) - R * rate_bias)
+    bias_ok = abs(emc_bias) <= bias_tolerance and abs(rate_bias) <= bias_tolerance
+    result.update(
+        entropy_rate=rate,
+        emc=max(0.0, raw_emc),
+        entropy_rate_bias_estimate=rate_bias,
+        emc_bias_estimate=emc_bias,
+        bias_ok=bool(bias_ok),
+    )
+    if not bias_ok:
+        warnings.append("bias_approximation_above_tolerance")
+    if raw_emc < -1e-12:
+        warnings.append("negative_emc_clamped")
+    return result
+
+
+def _warn_emc(result: dict) -> None:
+    """Log actionable calculation diagnostics without implying statistical confidence."""
+    if result["warnings"]:
+        logger.warning(
+            "EMC status=%s, order=%s: %s. See estimate_emc diagnostics; "
+            "uncertainty and longer dependencies are not assessed.",
+            result["status"],
+            result["order"],
+            ", ".join(result["warnings"]),
+        )
+
+
+def _number_or_nan(value) -> float:
+    """Map an unavailable structured value to a numerical NaN."""
+    return float("nan") if value is None else float(value)
+
+
+def estimate_emc(
+    sequence: list[str],
+    order: int | str = "bic",
+    max_order: int | None = None,
+    bias_tolerance: float = _DEFAULT_BIAS_TOLERANCE,
+    min_obs_per_context: float = _DEFAULT_MIN_OBS_PER_CONTEXT,
+) -> dict:
+    """
+    Estimate finite-order entropy rate and excess entropy with explicit diagnostics.
+
     Parameters
     ----------
     sequence : list of str
-        Symbolic sequence.
+        At least two symbols from a source assumed stationary. Trials are not pooled.
+    order : int or 'bic', default='bic'
+        Fixed non-negative Markov order, or automatic observed-context BIC selection.
+        A fixed order is never lowered and must permit at least two block windows.
+    max_order : int or None, default=None
+        Automatic search cap. None uses the runtime ceiling of 30. Explicit caps
+        above 30 are capped at 30 and reported; zero is preserved. Ignored for fixed
+        orders. The sequence length and sampling screen can restrict the search further.
+    bias_tolerance : float, default=0.05
+        Non-negative finite threshold for the absolute first-order bias approximation:
+        bits for EMC and bits/symbol for the rate. It is not an actual error bound.
+    min_obs_per_context : float, default=5
+        Positive finite minimum average number of observations per observed context.
+        Automatic selection stops at the first order failing this heuristic screen.
+
+    Returns
+    -------
+    dict
+        Calculation results containing the following entries:
+
+        ``entropy`` : float
+            Uncorrected empirical single-symbol entropy, in bits.
+        ``entropy_method`` : {'empirical'}
+            Method used to estimate ``entropy``.
+        ``bias_correction`` : bool
+            Whether a bias correction was applied to ``entropy``. Always ``False``.
+        ``entropy_rate`` : float or None
+            Order-R entropy-rate estimate, in bits per symbol, or ``None`` when
+            unavailable.
+        ``emc`` : float or None
+            Order-R excess-entropy estimate, in bits, or ``None`` when unavailable.
+        ``order`` : int or None
+            Markov order used for the estimates, or ``None`` when unavailable.
+        ``requested_order`` : int or {'bic'}
+            Fixed order requested by the caller or ``'bic'`` for automatic selection.
+        ``order_method`` : {'fixed', 'bic'}
+            Method used to determine ``order``.
+        ``bic_variant`` : {'observed_contexts'} or None
+            BIC parameter-count variant, or ``None`` for a fixed order.
+        ``bic_scores`` : dict[int, float] or None
+            BIC score for each candidate order, or ``None`` when no search ran.
+        ``n_symbols`` : int
+            Number of symbols in the input sequence.
+        ``max_order_requested`` : int or None
+            Automatic search cap requested by the caller, or ``None`` when omitted.
+        ``max_order_searched`` : int or None
+            Highest order included in a completed BIC search, or ``None`` when no
+            search ran.
+        ``search_order_limit`` : int or None
+            Screened automatic-search limit, or ``None`` for a fixed order.
+        ``sampling_order_limit`` : int
+            Highest order in the contiguous range passing the sampling screen. A
+            value of -1 means that order zero failed.
+        ``search_limit_reasons`` : list[str]
+            Codes identifying constraints on the automatic search range.
+        ``n_scored`` : int or None
+            Common number of observations used for BIC scores, or ``None`` when no
+            search ran.
+        ``order_at_search_limit`` : bool or None
+            Whether BIC selected the highest searched order, or ``None`` when no
+            search ran. This is not evidence by itself of missing memory.
+        ``min_obs_per_context`` : float
+            Minimum average observations per observed context used by the sampling
+            screen.
+        ``emc_bias_estimate`` : float or None
+            First-order bias approximation for ``emc``, in bits, or ``None`` when
+            EMC is unavailable. The approximation is not subtracted.
+        ``entropy_rate_bias_estimate`` : float or None
+            First-order bias approximation for ``entropy_rate``, in bits per symbol,
+            or ``None`` when the rate is unavailable. The approximation is not
+            subtracted.
+        ``bias_ok`` : bool or None
+            Whether both absolute bias approximations meet ``bias_tolerance``, or
+            ``None`` when the estimates are unavailable.
+        ``bias_tolerance`` : float
+            Threshold applied to the absolute bias approximations.
+        ``status`` : {'computed', 'sparse', 'insufficient_data'}
+            Calculation outcome. ``'computed'`` does not establish accuracy or
+            convergence.
+        ``warnings`` : list[str]
+            Codes for calculation diagnostics encountered by the estimator.
+        ``limitations`` : list[str]
+            Codes for uncertainty, dependence, truncation, and convergence properties
+            that the estimator does not assess.
+        ``units`` : dict[str, str]
+            Units for ``entropy``, ``entropy_rate``, and ``emc``.
+        ``block_entropies`` : list[float]
+            Empirical block entropies H_L for block lengths 1 through the computed
+            limit, in bits.
+        ``conditional_entropies`` : list[float]
+            Empirical conditional entropies H(X_L | X_1..X_(L-1)) for block lengths
+            1 through the computed limit, in bits per symbol.
+
+    Raises
+    ------
+    ValueError
+        If arguments are invalid, fewer than two symbols are supplied, or a fixed
+        order needs blocks longer than len(sequence) - 1.
+
+    Notes
+    -----
+    The shared estimator computes h_R = H(X_(R+1) | X_1..X_R) from matched block
+    and prefix counts, then E_R = max(0, H_R - R*h_R). These equal asymptotic rate
+    and EMC at the population level for stationary sources of order at most R.
+    Empirical values have sampling error; larger orders can add both bias and variance.
+
+    BIC scores all orders on N-M common positions, where M is the screened cap,
+    with penalty K_R*(|A|-1)*log(N-M) for observed contexts K_R. This is a variant
+    of standard BIC, whose unrestricted dimension is |A|**R*(|A|-1); its consistency
+    theorem is not claimed here. The selected order can differ across conditions.
+    Prefer a declared fixed resolution for comparisons when scientifically appropriate.
+    An explicit max_order=0 permits the caller's order-zero-only candidate set;
+    otherwise automatic selection needs at least orders zero and one to pass the screen.
+
+    The Miller-Madow bias approximation ignores temporal dependence, variance,
+    selection uncertainty and truncation, and can fail even when bias_ok is True.
+    Some hidden-state sources have infinite observed Markov order. Longer memory
+    cannot be ruled out by any of these diagnostics. Formal language class alone
+    does not determine whether excess entropy is finite. No bootstrap is performed.
+
+    References
+    ----------
+    Crutchfield and Feldman (2003), doi:10.1063/1.1530990.
+    Paninski (2003), doi:10.1162/089976603321780272.
+    Csiszar and Shields (2000), doi:10.1214/aos/1015957472 (standard BIC).
+    """
+    _validate_emc_settings(order, max_order, bias_tolerance, min_obs_per_context)
+    if len(sequence) < 2:
+        raise ValueError("At least two symbols are needed to estimate an entropy rate.")
+    if order != "bic" and order > len(sequence) - 2:
+        raise ValueError(
+            f"order={order} needs longer blocks; this sequence supports at most order {len(sequence) - 2}."
+        )
+    return _estimate_emc(sequence, order, max_order, bias_tolerance, min_obs_per_context)
+
+
+def entropy_rate(
+    sequence: list[str],
+    max_block_size: int,
+    method: str = "incremental",
+    min_block_size: int = 2,
+    order: int | str = "bic",
+    *,
+    bias_tolerance: float = _DEFAULT_BIAS_TOLERANCE,
+    min_obs_per_context: float = _DEFAULT_MIN_OBS_PER_CONTEXT,
+) -> float:
+    """
+    Return a finite-order entropy-rate estimate, or NaN when unavailable.
+
+    Parameters
+    ----------
+    sequence : list of str
+        At least two symbols.
     max_block_size : int
-        Maximum L to consider. Should be << len(sequence).
-    method : str, default='incremental'
-        'incremental': Use h_k = H_{k+1} - H_k (recommended)
-        'normalized': Use H_k / k (less reliable for short sequences)
+        Positive block-length cap. Incremental selection searches orders up to L-1,
+        subject to the sampling screen and runtime ceiling of `estimate_emc`.
+    method : {'incremental', 'normalized'}, default='incremental'
+        Incremental uses `estimate_emc`; normalized retains the H_L/L heuristic.
+        Normalized results do not establish convergence and carry no bias diagnostic.
     min_block_size : int, default=2
-        Minimum L before checking convergence.
-    
+        Unused; retained for backward compatibility.
+    order : int or 'bic', default='bic'
+        Order for the incremental estimator. Ignored by the normalized heuristic.
+    bias_tolerance : float, default=0.05
+        Threshold for the approximate bias check, as in `estimate_emc`.
+    min_obs_per_context : float, default=5
+        Sampling screen, as in `estimate_emc`.
+
     Returns
     -------
     float
-        Entropy rate estimate in bits/symbol.
-    
-    Notes
-    -----
-    For short sequences, this is the LEAST reliable metric!
-    Requires N >> k^k for reliable estimation at order k.
-    
-    Properties:
-    - 0 <= h_mu <= H(S)
-    - For i.i.d. sequences: h_mu = H(S)
-    - For deterministic sequences: h_mu = 0
+        Bits/symbol. Use `estimate_emc` for settings, status and limitations.
+
+    Raises
+    ------
+    ValueError
+        If the method, settings or sequence length are invalid.
     """
-    if len(sequence) < max_block_size + 1:
-        warnings.warn(
-            f"Sequence too short (N={len(sequence)}) for max_block_size={max_block_size}. "
-            "Entropy rate estimate will be unreliable.",
-            UserWarning
-        )
-        max_block_size = max(2, len(sequence) // 3)
+    if method not in ("incremental", "normalized"):
+        raise ValueError("method must be 'incremental' or 'normalized'.")
+    cap = _max_order_from_block_size(max_block_size)
+    _validate_emc_settings(order, cap, bias_tolerance, min_obs_per_context)
+    if len(sequence) < 2:
+        raise ValueError("At least two symbols are needed to estimate an entropy rate.")
+    if method == "incremental":
+        result = estimate_emc(sequence, order, cap, bias_tolerance, min_obs_per_context)
+        _warn_emc(result)
+        return _number_or_nan(result["entropy_rate"])
 
-    if method == 'incremental':
-        # Compute incremental entropies h_k = H_{k+1} - H_k
-        # For stationary processes, h_k converges to h_μ (the entropy rate)
-        h_incremental = []
-        H_values = []
-        for k in range(1, max_block_size + 1):
-            H_k = block_entropy(sequence, k)
-            H_values.append(H_k)
-            if k > 1:
-                h_k = H_k - H_values[k-2]
-                h_incremental.append(h_k)
-
-        if not h_incremental:
-            return entropy(sequence)
-
-        # Detect saturation: find where increments start dropping significantly
-        # For well-sampled sequences, increments should be stable
-        # For under-sampled sequences, increments drop when we run out of data
-
-        if len(h_incremental) >= 4:
-            # Look for where increments drop below 70% of the early average
-            # Use first 2-3 increments as baseline (most reliable)
-            early_increments = h_incremental[:min(3, len(h_incremental))]
-            mean_early = np.mean(early_increments)
-
-            saturation_idx = None
-            for i in range(len(early_increments), len(h_incremental)):
-                if h_incremental[i] < 0.7 * mean_early:
-                    saturation_idx = i
-                    break
-
-            if saturation_idx is not None:
-                # Saturation detected - use increments AFTER saturation (converged)
-                # Early increments overestimate h_mu for sequences with memory
-                converged_increments = h_incremental[saturation_idx:]
-                if len(converged_increments) >= 2:
-                    return np.mean(converged_increments)
-                else:
-                    return h_incremental[saturation_idx] if saturation_idx < len(h_incremental) else h_incremental[-1]
-
-            # No saturation - check for convergence
-            # Use coefficient of variation of last 3 values
-            last_3 = h_incremental[-3:]
-            mean_last = np.mean(last_3)
-            std_last = np.std(last_3)
-
-            if mean_last > 0.01:  # Only if increments are meaningful
-                cv = std_last / mean_last  # Coefficient of variation
-                if cv < 0.1:  # Less than 10% variation
-                    return mean_last
-
-        # Fallback: use mean of first half (before potential saturation)
-        n_use = max(2, len(h_incremental) // 2)
-        return np.mean(h_incremental[:n_use])
-
-    else:  # 'normalized' method
-        # Compute H_k / k for increasing k
-        normalized_entropies = []
-        for k in range(1, max_block_size + 1):
-            H_k = block_entropy(sequence, k)
-            normalized_entropies.append(H_k / k)
-
-        # Similar convergence detection
-        if len(normalized_entropies) >= 4:
-            last_3 = normalized_entropies[-3:]
-            if np.std(last_3) / np.mean(last_3) < 0.05:
-                return np.mean(last_3)
-
-        return np.median(normalized_entropies[-3:])
+    max_k = min(max_block_size, len(sequence) - 1)
+    values = [block_entropy(sequence, k) / k for k in range(1, max_k + 1)]
+    if len(values) >= 4:
+        last = values[-3:]
+        mean = np.mean(last)
+        if mean == 0 or np.std(last) / mean < 0.05:
+            return float(mean)
+    return float(np.median(values[-3:]))
 
 
-def emc(sequence: list[str],
-        max_block_size: int = 10,
-        return_curve: bool = False) -> tuple:
+def emc(
+    sequence: list[str],
+    max_block_size: int | None = None,
+    return_curve: bool = False,
+    order: int | str = "bic",
+    *,
+    bias_tolerance: float = _DEFAULT_BIAS_TOLERANCE,
+    min_obs_per_context: float = _DEFAULT_MIN_OBS_PER_CONTEXT,
+) -> tuple:
     """
-    Compute Effective Measure Complexity (Excess Entropy).
-    
-    EMC quantifies the mutual information between past and future,
-    capturing memory and temporal dependencies.
-    
-    The decomposition H(1) = h_μ + E should hold, where:
-    - H(1) is the Shannon entropy (block entropy at k=1)
-    - h_μ is the entropy rate (asymptotic limit)
-    - E is the excess entropy (EMC)
-    
+    Return finite-order EMC and entropy rate using the shared estimator.
+
     Parameters
     ----------
     sequence : list of str
-        Symbolic sequence.
-    max_block_size : int, default=10
-        Maximum L for computation. Should be chosen such that
-        H_L converges (flattens out).
+        At least two symbols.
+    max_block_size : int or None, default=None
+        BIC order cap L-1, or the automatic sampling limit and runtime ceiling if None.
+        An explicit value also requests that many curve points (capped at N-1).
     return_curve : bool, default=False
-        If True, return full excess curve [E(1), E(2), ..., E(L)].
-    
+        Return H_L - L*h_R as a descriptive curve, not a convergence test.
+    order : int or 'bic', default='bic'
+        Fixed or selected order as in `estimate_emc`.
+    bias_tolerance : float, default=0.05
+        Threshold for the approximate bias check.
+    min_obs_per_context : float, default=5
+        Average observations per observed context required by the sampling screen.
+
     Returns
     -------
-    tuple : (emc_value, h_mu) or (emc_value, h_mu, excess_curve)
-        emc_value : float
-            The excess entropy in bits
-        h_mu : float
-            The entropy rate in bits/symbol
-        excess_curve : list of float (if return_curve=True)
-            Excess values E(L) = H_L - L*h_mu for each L
-    
-    Notes
-    -----
-    Correct formula: E = Σ_{k=1}^∞ [h_k - h_μ]
-    
-    Equivalently: E = lim_{L→∞} [H_L - L*h_μ]
-    
-    The limit exists and is finite for stationary ergodic processes.
-    For finite sequences, we find where H_L - L*h_μ plateaus.
-    
-    Properties:
-    - E = 0 for memoryless (i.i.d.) sequences
-    - E > 0 indicates memory/structure
-    - E ≤ H(X) typically (can be higher for some processes)
-    - For k-th order Markov: E ≤ k * H(X)
-    
-    References
-    ----------
-    Crutchfield & Feldman (2003), Grassberger (1986)
+    emc_value : float
+        Excess-entropy estimate, in bits, or NaN when unavailable.
+    entropy_rate_value : float
+        Entropy-rate estimate, in bits per symbol, or NaN when unavailable.
+    excess_curve : list[float], optional
+        Descriptive values H_L - L*h_R for each computed block length. Returned only
+        when ``return_curve`` is ``True`` and does not establish convergence.
+
+    Raises
+    ------
+    ValueError
+        If settings, sequence length or a requested fixed order are invalid.
     """
-    # First estimate entropy rate robustly
-    h_mu = entropy_rate(sequence, max_block_size, method='incremental')
-
-    # Compute excess curve: E(L) = H_L - L*h_mu
-    excess_curve = []
-    for L in range(1, max_block_size + 1):
-        H_L = block_entropy(sequence, L)
-        E_L = H_L - L * h_mu
-        excess_curve.append(E_L)
-
-    # Find where the curve plateaus (converges)
-    # Strategy: Find maximum in first 2/3 of curve, then check stability
-
-    if len(excess_curve) >= 4:
-        # Find peak location (usually early in curve)
-        search_range = max(3, len(excess_curve) * 2 // 3)
-        peak_idx = np.argmax(excess_curve[:search_range])
-        peak_value = excess_curve[peak_idx]
-
-        # Check if subsequent values are stable near peak
-        # (within 5% of peak value)
-        stable_values = []
-        tolerance = 0.05 * abs(peak_value) if peak_value != 0 else 0.01
-
-        for i in range(peak_idx, len(excess_curve)):
-            if abs(excess_curve[i] - peak_value) <= tolerance:
-                stable_values.append(excess_curve[i])
-            else:
-                # Curve started decreasing significantly - stop
-                break
-
-        if len(stable_values) >= 2:
-            # Found a stable plateau
-            emc_value = np.mean(stable_values)
-        else:
-            # No plateau - use peak value (may be unreliable)
-            emc_value = peak_value
-            warnings.warn(
-                f"EMC did not converge within max_block_size={max_block_size}. "
-                "Consider increasing max_block_size or sequence length.",
-                UserWarning
-            )
-    else:
-        # Too few points - use maximum
-        emc_value = max(excess_curve)
-        warnings.warn(
-            "Insufficient block sizes for reliable EMC. Results may be unreliable.",
-            UserWarning
-        )
-
-    # Sanity check: EMC should be non-negative and bounded
-    emc_value = max(0.0, emc_value)  # Can't be negative
-
+    cap = None if max_block_size is None else _max_order_from_block_size(max_block_size)
+    result = estimate_emc(sequence, order, cap, bias_tolerance, min_obs_per_context)
+    _warn_emc(result)
+    E, rate = _number_or_nan(result["emc"]), _number_or_nan(result["entropy_rate"])
     if return_curve:
-        return emc_value, h_mu, excess_curve
-    else:
-        return emc_value, h_mu
+        H = result["block_entropies"]
+        if max_block_size is not None:
+            count = min(max_block_size, len(sequence) - 1)
+            if count > len(H):
+                H = H + [block_entropy(sequence, L) for L in range(len(H) + 1, count + 1)]
+            H = H[:count]
+        return E, rate, [value - L * rate for L, value in enumerate(H, start=1)]
+    return E, rate
 
 
-def detect_saturation_point(sequence: list[str],
-                            max_k: int,
-                            method: str = 'adaptive') -> dict:
+def detect_saturation_point(sequence: list[str], max_k: int, method: str = "adaptive") -> dict:
     """
     Detect saturation point k* where block entropy curve flattens.
-    
-    This is the effective memory length of the sequence. 
-    Note that the method is inherently limited, particularly when dealing with small
-    samples
-    
+
+    This describes empirical curve flattening only. Undersampling can produce the
+    same shape as genuine predictability. It neither identifies the source's memory
+    length nor establishes entropy-rate or EMC convergence, and does not select the
+    order used by the EMC estimator.
+
     Parameters
     ----------
     sequence : list of str
@@ -358,60 +650,112 @@ def detect_saturation_point(sequence: list[str],
     method : str, default='adaptive'
         'adaptive': Use adaptive statistical threshold (recommended)
         'relative': Use fixed relative threshold (15% of max increment)
-        'statistical': Use 2-sigma significance test
+        'statistical': Use a heuristic two-standard-deviation threshold (not a significance test)
         'hybrid': Combine multiple methods
-    
+
     Returns
     -------
-    dict with keys:
-        'k_star': int - Detected saturation point
-        'confidence': str - 'high', 'medium', 'low'
-        'method_used': str
-        'increments': list - Block entropy increments
-        'H_values': list - Block entropy values
-        'diagnostic': dict - Additional diagnostic info
+    dict
+        Detection results containing the following entries:
+
+        ``k_star`` : int
+            Detected empirical saturation point.
+        ``confidence`` : {'high', 'medium', 'low'}
+            Heuristic confidence label, not a calibrated probability.
+        ``method_used`` : {'adaptive', 'relative', 'statistical', 'hybrid'}
+            Saturation-detection method used.
+        ``interpretation`` : {'empirical_flattening'}
+            Interpretation assigned to the detected pattern.
+        ``confidence_calibrated`` : bool
+            Whether ``confidence`` is statistically calibrated. Always ``False``.
+        ``increments`` : list[float]
+            Successive empirical block-entropy increments, in bits.
+        ``H_values`` : list[float]
+            Empirical block entropies for block lengths 1 through ``max_k``, in bits.
+        ``diagnostic`` : dict[str, object]
+            Method-dependent diagnostic values and sampling information.
+
+    Raises
+    ------
+    ValueError
+        If `method` is not one of the listed methods.
+
+    Notes
+    -----
+    An observed constant sequence returns k* = 1; this does not establish the source has no memory.
     """
-    # Compute block entropies
+    _validate_saturation_method(method)
     H_values = [block_entropy(sequence, k) for k in range(1, max_k + 1)]
+    return _detect_saturation_from_entropies(H_values, len(sequence), len(set(sequence)), method)
+
+
+def _validate_saturation_method(method: str) -> None:
+    if method not in _SATURATION_METHODS:
+        raise ValueError(f"Unknown saturation method {method!r}. Choose one of {_SATURATION_METHODS}.")
+
+
+def _detect_saturation_from_entropies(
+    H_values: list[float], N: int, alphabet_size: int, method: str, warn_unreliable: bool = True
+) -> dict:
+    """
+    Detect the saturation point from block entropies H_1..H_max_k (shared core).
+
+    Used by `detect_saturation_point` and by the ensemble path, so both apply the same rule.
+    If `warn_unreliable` is False, the log message for an unreliable k* is suppressed (the result is
+    still marked as low confidence).
+    """
+    _validate_saturation_method(method)
+    max_k = len(H_values)
 
     # Compute increments δ_k = H_{k+1} - H_k
-    increments = [H_values[i+1] - H_values[i] for i in range(len(H_values) - 1)]
+    increments = [H_values[i + 1] - H_values[i] for i in range(len(H_values) - 1)]
 
     if len(increments) < 2:
         return {
-            'k_star': 1,
-            'confidence': 'low',
-            'method_used': method,
-            'increments': increments,
-            'H_values': H_values,
-            'diagnostic': {'error': 'Insufficient data points'}
+            "k_star": 1,
+            "confidence": "low",
+            "method_used": method,
+            "interpretation": "empirical_flattening",
+            "confidence_calibrated": False,
+            "increments": increments,
+            "H_values": H_values,
+            "diagnostic": {"error": "Insufficient data points"},
         }
 
-    # Estimate noise level from late increments (should be small if converged)
-    if len(increments) >= 4:
-        noise_estimate = np.std(increments[-3:])  # Last 3 increments
-    else:
-        noise_estimate = np.std(increments) / 2
+    if alphabet_size <= 1:
+        # The observed constant sequence has a flat empirical entropy curve.
+        return {
+            "k_star": 1,
+            "confidence": "high",
+            "method_used": method,
+            "interpretation": "empirical_flattening",
+            "confidence_calibrated": False,
+            "increments": increments,
+            "H_values": H_values,
+            "diagnostic": {"pattern": "constant_sequence", "N": N, "alphabet_size": alphabet_size},
+        }
+
+    # Descriptive variation in the tail, not a standard error or convergence test.
+    noise_estimate = np.std(increments[-3:]) if len(increments) >= 4 else np.std(increments) / 2
 
     k_star = None
-    confidence = 'low'
+    confidence = "low"
     diagnostic = {}
 
-    if method == 'statistical':
-        # Method 1: Statistical significance test
-        # Find where increment is not significantly different from noise
+    if method == "statistical":
+        # Method 1: Heuristic threshold on empirical increments, not a significance test
         threshold = 2 * noise_estimate  # 2-sigma
 
         for i, inc in enumerate(increments):
             if i > 0 and inc < threshold:  # Skip k=1→2 (first jump)
                 k_star = i + 1  # Convert to k value
-                confidence = 'high' if inc < noise_estimate else 'medium'
+                confidence = "high" if inc < noise_estimate else "medium"
                 break
 
-        diagnostic['noise_estimate'] = noise_estimate
-        diagnostic['threshold'] = threshold
+        diagnostic["noise_estimate"] = noise_estimate
+        diagnostic["threshold"] = threshold
 
-    elif method == 'relative':
+    elif method == "relative":
         # Method 2: Relative drop from first increment
         # Look for where increment drops significantly from maximum
         max_increment = max(increments)
@@ -420,13 +764,13 @@ def detect_saturation_point(sequence: list[str],
         for i in range(1, len(increments)):
             if increments[i] / max_increment < threshold_ratio:
                 k_star = i + 1
-                confidence = 'medium'
+                confidence = "medium"
                 break
 
-        diagnostic['max_increment'] = max_increment
-        diagnostic['threshold_ratio'] = threshold_ratio
+        diagnostic["max_increment"] = max_increment
+        diagnostic["threshold_ratio"] = threshold_ratio
 
-    elif method == 'adaptive':
+    elif method == "adaptive":
         # Method 3: Adaptive - test for constant increments (IID) vs. elbow (memory)
         #
         # Key insight: For IID sequences, increments stay roughly constant until
@@ -453,18 +797,18 @@ def detect_saturation_point(sequence: list[str],
                         # Found where sample exhaustion starts
                         # k* is just before this point
                         k_star = i
-                        confidence = 'medium' if cv_early < 0.10 else 'low'
-                        diagnostic['pattern'] = 'constant_increments'
-                        diagnostic['cv_early'] = cv_early
-                        diagnostic['sample_limit_at'] = i
+                        confidence = "medium" if cv_early < 0.10 else "low"
+                        diagnostic["pattern"] = "constant_increments"
+                        diagnostic["cv_early"] = cv_early
+                        diagnostic["sample_limit_at"] = i
                         break
 
                 if k_star is None:
                     # Never dropped - truly constant
                     k_star = 1
-                    confidence = 'high' if cv_early < 0.10 else 'medium'
-                    diagnostic['pattern'] = 'iid_like'
-                    diagnostic['cv_early'] = cv_early
+                    confidence = "high" if cv_early < 0.10 else "medium"
+                    diagnostic["pattern"] = "iid_like"
+                    diagnostic["cv_early"] = cv_early
 
             else:
                 # Increments are NOT constant - look for elbow (memory signature)
@@ -480,36 +824,37 @@ def detect_saturation_point(sequence: list[str],
 
                         # Confidence based on sharpness of drop
                         if i > 0:
-                            drop_ratio = increments[i] / increments[i-1]
+                            drop_ratio = increments[i] / increments[i - 1]
                             if drop_ratio < 0.3:
-                                confidence = 'high'
+                                confidence = "high"
                             elif drop_ratio < 0.5:
-                                confidence = 'medium'
+                                confidence = "medium"
                             else:
-                                confidence = 'low'
+                                confidence = "low"
                         else:
-                            confidence = 'medium'
+                            confidence = "medium"
 
-                        diagnostic['pattern'] = 'elbow_detected'
-                        diagnostic['cv_early'] = cv_early
-                        diagnostic['threshold'] = threshold
-                        diagnostic['drop_ratio'] = drop_ratio if i > 0 else None
+                        diagnostic["pattern"] = "elbow_detected"
+                        diagnostic["cv_early"] = cv_early
+                        diagnostic["threshold"] = threshold
+                        diagnostic["drop_ratio"] = drop_ratio if i > 0 else None
                         break
 
         else:
             # Too few points
             k_star = 1
-            confidence = 'low'
-            diagnostic['pattern'] = 'insufficient_data'
+            confidence = "low"
+            diagnostic["pattern"] = "insufficient_data"
 
-    elif method == 'hybrid':
+    elif method == "hybrid":
         # Method 4: Run all methods and use majority vote
-        methods_to_try = ['statistical', 'relative', 'adaptive']
+        methods_to_try = ["statistical", "relative", "adaptive"]
         k_candidates = []
 
         for m in methods_to_try:
-            result = detect_saturation_point(sequence, max_k, method=m)
-            k_candidates.append(result['k_star'])
+            # reliability is checked once below
+            result = _detect_saturation_from_entropies(H_values, N, alphabet_size, m, warn_unreliable=False)
+            k_candidates.append(result["k_star"])
 
         # Use median (robust to outliers)
         k_star = int(np.median(k_candidates))
@@ -517,58 +862,55 @@ def detect_saturation_point(sequence: list[str],
         # Confidence based on agreement
         k_std = np.std(k_candidates)
         if k_std < 0.5:
-            confidence = 'high'
+            confidence = "high"
         elif k_std < 1.5:
-            confidence = 'medium'
+            confidence = "medium"
         else:
-            confidence = 'low'
+            confidence = "low"
 
-        diagnostic['k_candidates'] = k_candidates
-        diagnostic['k_std'] = k_std
+        diagnostic["k_candidates"] = k_candidates
+        diagnostic["k_std"] = k_std
 
     # Fallback if no saturation detected
     if k_star is None:
         k_star = max_k
-        confidence = 'low'
-        diagnostic['warning'] = 'No clear saturation detected within max_k'
+        confidence = "low"
+        diagnostic["warning"] = "No clear saturation detected within max_k"
 
     # Additional validation
-    N = len(sequence)
-    alphabet_size = len(set(sequence))
-
     # Check if k* is reasonable given sequence length
     # Rule of thumb: Need N >> |A|^k for reliable k-gram statistics
     min_samples_per_kgram = 3
     max_reliable_k = int(np.floor(np.log(N / min_samples_per_kgram) / np.log(alphabet_size)))
 
     if k_star > max_reliable_k:
-        warnings.warn(
-            f"Detected k*={k_star} may be unreliable for N={N} and alphabet size={alphabet_size}. "
-            f"Maximum reliable k ≈ {max_reliable_k}",
-            UserWarning
-        )
-        confidence = 'low'
+        if warn_unreliable:
+            logger.warning(
+                f"Detected k*={k_star} may be unreliable for N={N} and alphabet size={alphabet_size}. "
+                f"Maximum reliable k ≈ {max_reliable_k}"
+            )
+        confidence = "low"
 
-    diagnostic['max_reliable_k'] = max_reliable_k
-    diagnostic['N'] = N
-    diagnostic['alphabet_size'] = alphabet_size
+    diagnostic["max_reliable_k"] = max_reliable_k
+    diagnostic["N"] = N
+    diagnostic["alphabet_size"] = alphabet_size
 
     return {
-        'k_star': k_star,
-        'confidence': confidence,
-        'method_used': method,
-        'increments': increments,
-        'H_values': H_values,
-        'diagnostic': diagnostic
+        "k_star": k_star,
+        "confidence": confidence,
+        "method_used": method,
+        "interpretation": "empirical_flattening",
+        "confidence_calibrated": False,
+        "increments": increments,
+        "H_values": H_values,
+        "diagnostic": diagnostic,
     }
 
 
-def compute_adaptive_max_k(sequence: list[str],
-                           default_max_k: int = 6,
-                           min_samples_per_kgram: int = 5) -> int:
+def compute_adaptive_max_k(sequence: list[str], default_max_k: int = 6, min_samples_per_kgram: int = 5) -> int:
     """
     Compute adaptive maximum block size based on sequence length and alphabet.
-    
+
     Parameters
     ----------
     sequence : list of str
@@ -577,12 +919,12 @@ def compute_adaptive_max_k(sequence: list[str],
         Default maximum k if sequence is long enough.
     min_samples_per_kgram : int, default=5
         Minimum number of samples required per k-gram for reliable statistics.
-    
+
     Returns
     -------
     int
         Adaptive maximum block size.
-    
+
     Notes
     -----
     Uses the rule: max_k such that N >= min_samples * |A|^k
@@ -604,39 +946,56 @@ def compute_adaptive_max_k(sequence: list[str],
 def aggregate_saturation_results(saturation_results: list[dict]) -> dict:
     """
     Aggregate saturation detection results across multiple sequences.
-    
-    Uses confidence-weighted median to determine consensus k*.
-    
+
+    Uses a heuristic-label-weighted median to summarize empirical flattening.
+    These labels are not calibrated statistical confidence or evidence of convergence.
+
     Parameters
     ----------
     saturation_results : list of dict
         List of saturation detection results from detect_saturation_point().
-    
+
     Returns
     -------
-    dict with keys:
-        'k_star': int - Consensus saturation point (weighted median)
-        'confidence': str - Overall confidence level
-        'confidence_counts': dict - Count of each confidence level
-        'k_star_values': list - Individual k* values
+    dict
+        Aggregated detection results containing the following entries:
+
+        ``interpretation`` : {'empirical_flattening'}
+            Interpretation assigned to the aggregated result.
+        ``confidence_calibrated`` : bool
+            Whether ``confidence`` is statistically calibrated. Always ``False``.
+        ``n_detections`` : int
+            Number of saturation results included in the aggregation.
+        ``k_star`` : int
+            Heuristic-label-weighted median saturation point, or 2 when no results
+            are supplied.
+        ``confidence`` : {'high', 'medium', 'low'}
+            Overall heuristic confidence label.
+        ``confidence_counts`` : dict[str, int]
+            Numbers of ``'high'``, ``'medium'``, and ``'low'`` input labels.
+        ``k_star_values`` : list[int]
+            Saturation points from the individual input results.
     """
     if not saturation_results:
         return {
-            'k_star': 2,
-            'confidence': 'low',
-            'confidence_counts': {'high': 0, 'medium': 0, 'low': 0},
-            'k_star_values': []
+            "interpretation": "empirical_flattening",
+            "confidence_calibrated": False,
+            "n_detections": 0,
+            "k_star": 2,
+            "confidence": "low",
+            "confidence_counts": {"high": 0, "medium": 0, "low": 0},
+            "k_star_values": [],
         }
 
-    k_star_values = [r['k_star'] for r in saturation_results]
-    confidences = [r['confidence'] for r in saturation_results]
+    k_star_values = [r["k_star"] for r in saturation_results]
+    confidences = [r["confidence"] for r in saturation_results]
 
     # Weighted median using confidence levels
-    conf_map = {'high': 3, 'medium': 2, 'low': 1}
+    conf_map = {"high": 3, "medium": 2, "low": 1}
     weights = [conf_map[c] for c in confidences]
 
     # Sort by k* value with corresponding weights
-    sorted_pairs = sorted(zip(k_star_values, weights))
+    sorted_pairs = sorted(zip(k_star_values, weights, strict=True))
     cumsum = 0
     total = sum(weights)
 
@@ -649,242 +1008,166 @@ def aggregate_saturation_results(saturation_results: list[dict]) -> dict:
             break
 
     # Compute confidence statistics
-    high_conf_count = confidences.count('high')
-    medium_conf_count = confidences.count('medium')
-    low_conf_count = confidences.count('low')
+    high_conf_count = confidences.count("high")
+    medium_conf_count = confidences.count("medium")
+    low_conf_count = confidences.count("low")
     total_count = len(confidences)
 
     # Overall confidence based on proportion of high-confidence results
     if high_conf_count / total_count > 0.6:
-        overall_confidence = 'high'
+        overall_confidence = "high"
     elif high_conf_count / total_count > 0.3:
-        overall_confidence = 'medium'
+        overall_confidence = "medium"
     else:
-        overall_confidence = 'low'
+        overall_confidence = "low"
 
     return {
-        'k_star': int(k_star_consensus),
-        'confidence': overall_confidence,
-        'confidence_counts': {
-            'high': high_conf_count,
-            'medium': medium_conf_count,
-            'low': low_conf_count
-        },
-        'k_star_values': k_star_values
+        "interpretation": "empirical_flattening",
+        "confidence_calibrated": False,
+        "n_detections": len(saturation_results),
+        "k_star": int(k_star_consensus),
+        "confidence": overall_confidence,
+        "confidence_counts": {"high": high_conf_count, "medium": medium_conf_count, "low": low_conf_count},
+        "k_star_values": k_star_values,
     }
 
 
-def _compute_block_entropies_cached(sequence: list[str], max_k: int) -> dict[int, float]:
-    """Compute all block entropies up to max_k once (helper for optimization)."""
-    H_values = {}
-    for k in range(1, max_k + 1):
-        H_values[k] = block_entropy(sequence, k)
-    return H_values
-
-
-def _emc_from_cache(H_cache: dict[int, float], max_k: int) -> tuple[float, float]:
-    """Compute EMC using pre-computed H values (helper for optimization)."""
-    # Estimate entropy rate from cached values
-    h_incremental = []
-    for k in range(2, max_k + 1):
-        h_k = H_cache[k] - H_cache[k-1]
-        h_incremental.append(h_k)
-
-    # Use LATE increments for h_mu (converged values, not early ones)
-    # Early increments overestimate h_mu for sequences with memory
-    if len(h_incremental) >= 4:
-        # Find where increments stabilize (drop below 50% of early mean)
-        early_mean = np.mean(h_incremental[:3])
-        converged_idx = len(h_incremental)
-        for i in range(3, len(h_incremental)):
-            if h_incremental[i] < 0.5 * early_mean:
-                converged_idx = i
-                break
-        # Use the last few increments (most converged)
-        n_use = max(2, len(h_incremental) - converged_idx)
-        h_mu = np.mean(h_incremental[-n_use:])
-    elif h_incremental:
-        h_mu = h_incremental[-1]  # Use last available increment
-    else:
-        h_mu = 0.0
-
-    # Compute excess curve
-    excess_curve = []
-    for L in range(1, max_k + 1):
-        E_L = H_cache[L] - L * h_mu
-        excess_curve.append(E_L)
-
-    # Find plateau (same logic as original emc function)
-    if len(excess_curve) >= 4:
-        search_range = max(3, len(excess_curve) * 2 // 3)
-        peak_idx = np.argmax(excess_curve[:search_range])
-        peak_value = excess_curve[peak_idx]
-
-        stable_values = []
-        tolerance = 0.05 * abs(peak_value) if peak_value != 0 else 0.01
-
-        for i in range(peak_idx, len(excess_curve)):
-            if abs(excess_curve[i] - peak_value) <= tolerance:
-                stable_values.append(excess_curve[i])
-            else:
-                break
-
-        if len(stable_values) >= 2:
-            emc_value = np.mean(stable_values)
-        else:
-            emc_value = peak_value
-    else:
-        emc_value = max(excess_curve) if excess_curve else 0.0
-
-    emc_value = max(0.0, emc_value)
-
-    # Validate: h_mu + emc should approximately equal H(1)
-    H_1 = H_cache[1]
-    decomposition_sum = h_mu + emc_value
-    if abs(decomposition_sum - H_1) > 0.5 * H_1:  # More than 50% error
-        warnings.warn(
-            f"Entropy decomposition inconsistent: h_μ ({h_mu:.3f}) + EMC ({emc_value:.3f}) = "
-            f"{decomposition_sum:.3f} ≠ H(1) = {H_1:.3f}. "
-            "Consider increasing max_block_size for better convergence.",
-            UserWarning
-        )
-
-    return emc_value, h_mu
-
-
-def _detect_saturation_from_cache(H_cache: dict[int, float], max_k: int, method: str = 'adaptive') -> dict:
-    """Detect saturation using pre-computed H values (helper for optimization)."""
-    H_values = [H_cache[k] for k in range(1, max_k + 1)]
-    increments = [H_values[i+1] - H_values[i] for i in range(len(H_values) - 1)]
-
-    # Simplified saturation detection (basic version)
-    if len(increments) >= 3:
-        # Find where increments drop significantly
-        mean_early = np.mean(increments[:3])
-        for i in range(3, len(increments)):
-            if increments[i] < 0.3 * mean_early:
-                return {
-                    'k_star': i + 1,
-                    'confidence': 'medium',
-                    'method_used': method,
-                    'increments': increments,
-                    'H_values': H_values
-                }
-
-    return {
-        'k_star': 2,
-        'confidence': 'low',
-        'method_used': method,
-        'increments': increments,
-        'H_values': H_values
-    }
-
-
-def compute_entropy_metrics_ensemble(sequences: list[list[str]],
-                                     max_block_size: int | None = None,
-                                     min_sequence_length: int = 10,
-                                     saturation_method: str = 'hybrid') -> dict:
+def compute_entropy_metrics_ensemble(
+    sequences: list[list[str]],
+    max_block_size: int | None = None,
+    min_sequence_length: int = 10,
+    saturation_method: str = "hybrid",
+    emc_order: int | str = "bic",
+    bias_tolerance: float = _DEFAULT_BIAS_TOLERANCE,
+    min_obs_per_context: float = _DEFAULT_MIN_OBS_PER_CONTEXT,
+) -> dict:
     """
-    Compute entropy-based metrics on an ensemble of sequences.
-    
-    This function handles the complexity of computing block entropy, entropy rate,
-    and EMC across multiple sequences with varying lengths, using adaptive max_k
-    and robust aggregation.
-    
+    Compute per-sequence empirical entropy, finite-order EMC and descriptive saturation.
+
     Parameters
     ----------
     sequences : list of list of str
-        List of symbolic sequences.
-    max_block_size : int, optional
-        Maximum block size to use. If None, computed adaptively per sequence.
+        Independent input sequences; never concatenated or pooled.
+    max_block_size : int or None, default=None
+        EMC search cap L-1, screened as in `estimate_emc`. For saturation this is the
+        requested block limit; None uses `compute_adaptive_max_k` for that diagnostic.
     min_sequence_length : int, default=10
-        Minimum sequence length to include in analysis.
+        Minimum included length, at least two. Input indices are returned after filtering.
     saturation_method : str, default='hybrid'
-        Method for saturation detection ('adaptive', 'hybrid', etc.).
-    
+        Descriptive flattening heuristic, as in `detect_saturation_point`. It does not
+        select the EMC order or establish memory length or convergence.
+    emc_order : int or 'bic', default='bic'
+        Fixed or selected order. A fixed order unavailable for an individual sequence
+        produces an insufficient_data record without dropping that sequence.
+    bias_tolerance : float, default=0.05
+        Threshold for the approximate bias check, not an actual error bound.
+    min_obs_per_context : float, default=5
+        Sampling screen as in `estimate_emc`.
+
     Returns
     -------
-    dict with keys:
-        'block_entropy_k2': list of float
-        'entropy_rate': list of float
-        'emc': list of float
-        'saturation': dict from aggregate_saturation_results()
-        'n_sequences_analyzed': int
-        'mean_sequence_length': float
+    dict
+        Ensemble results containing the following entries. Per-sequence lists are
+        aligned with ``records`` and ``input_indices`` unless stated otherwise.
+
+        ``entropy`` : list[float]
+            Empirical single-symbol entropy for each included sequence, in bits.
+        ``block_entropy_k2`` : list[float]
+            Empirical order-two block entropy for each included sequence, in bits.
+        ``entropy_rate`` : list[float]
+            Entropy-rate estimate for each included sequence, in bits per symbol.
+            Unavailable estimates are NaN.
+        ``emc`` : list[float]
+            Excess-entropy estimate for each included sequence, in bits. Unavailable
+            estimates are NaN.
+        ``emc_order`` : list[float]
+            Markov order used for each included sequence, represented numerically.
+            Unavailable orders are NaN.
+        ``emc_bias_estimate`` : list[float]
+            First-order EMC bias approximation for each included sequence, in bits.
+            Unavailable estimates are NaN.
+        ``entropy_rate_bias_estimate`` : list[float]
+            First-order entropy-rate bias approximation for each included sequence,
+            in bits per symbol. Unavailable estimates are NaN.
+        ``records`` : list[dict]
+            Full ``estimate_emc`` results for each included sequence, extended with
+            ``input_index``, ``block_entropy_k2``, and ``saturation``.
+        ``input_indices`` : list[int]
+            Indices of included sequences in the original input.
+        ``emc_bias_ok`` : list[bool or None]
+            Bias-threshold result for each included sequence, or ``None`` when the
+            bias approximations are unavailable.
+        ``emc_status`` : list[str]
+            EMC calculation status for each included sequence.
+        ``emc_order_method`` : {'fixed', 'bic'}
+            Method used to determine EMC orders.
+        ``saturation`` : dict
+            Aggregation of all successful descriptive saturation detections.
+        ``saturation_results_raw`` : list[dict]
+            Successful saturation detections. Unlike the other per-sequence lists,
+            this list omits sequences for which saturation was unavailable.
+        ``n_sequences_analyzed`` : int
+            Number of sequences meeting ``min_sequence_length``, including sequences
+            for which EMC was unavailable.
+        ``mean_sequence_length`` : float
+            Mean length of included sequences, or 0.0 when none were included.
+
+    Raises
+    ------
+    ValueError
+        If any global setting is invalid, including for an empty ensemble.
+
+    Notes
+    -----
+    Computed status and bias_ok do not establish accuracy. Uncertainty, dependence,
+    longer memory and asymptotic convergence are not assessed. See record limitations.
     """
-    # Filter sequences by minimum length
-    valid_sequences = [seq for seq in sequences if len(seq) >= min_sequence_length]
-
-    if not valid_sequences:
-        warnings.warn(
-            f"No sequences meet minimum length requirement ({min_sequence_length}). "
-            "Returning default values.",
-            UserWarning
-        )
-        return {
-            'block_entropy_k2': [],
-            'entropy_rate': [],
-            'emc': [],
-            'saturation': aggregate_saturation_results([]),
-            'n_sequences_analyzed': 0,
-            'mean_sequence_length': 0.0
-        }
-
-    # Compute metrics for each sequence
-    block_entropies_k2 = []
-    entropy_rates = []
-    emcs = []
+    _validate_saturation_method(saturation_method)
+    cap = None if max_block_size is None else _max_order_from_block_size(max_block_size)
+    _validate_emc_settings(emc_order, cap, bias_tolerance, min_obs_per_context)
+    if not is_integer(min_sequence_length) or min_sequence_length < 2:
+        raise ValueError("min_sequence_length must be an integer of at least two.")
+    records = []
     saturation_results = []
-
-    for seq in valid_sequences:
-        # Determine adaptive max_k for this sequence
-        if max_block_size is None:
-            max_k = compute_adaptive_max_k(seq, default_max_k=6)
-        else:
-            max_k = min(max_block_size, len(seq) - 1)
-
-        # Skip if max_k is too small for meaningful analysis
-        if max_k < 2:
+    for index, seq in enumerate(sequences):
+        if len(seq) < min_sequence_length:
             continue
-
-        # OPTIMIZATION: Compute all block entropies once and reuse
-        try:
-            H_cache = _compute_block_entropies_cached(seq, max_k)
-        except Exception as e:
-            warnings.warn(f"Failed to compute block entropies: {e}", UserWarning)
-            continue
-
-        # Use cached block entropy at k=2
-        try:
-            block_entropies_k2.append(H_cache[2])
-        except Exception as e:
-            warnings.warn(f"Failed to retrieve block entropy k=2: {e}", UserWarning)
-
-        # Compute entropy rate and EMC using cached values
+        max_k = (
+            compute_adaptive_max_k(seq, default_max_k=6)
+            if max_block_size is None
+            else min(max_block_size, len(seq) - 1)
+        )
+        est = _estimate_emc(seq, emc_order, cap, bias_tolerance, min_obs_per_context, extra_blocks=max(2, max_k))
+        H = est["block_entropies"]
+        sat = None
         if max_k >= 3:
-            try:
-                emc_val, h_mu = _emc_from_cache(H_cache, max_k)
-                entropy_rates.append(h_mu)
-                emcs.append(emc_val)
-            except Exception as e:
-                warnings.warn(f"Failed to compute EMC/entropy rate from cache: {e}", UserWarning)
+            sat = _detect_saturation_from_entropies(H[:max_k], len(seq), len(set(seq)), saturation_method)
+            saturation_results.append(sat)
+        est.update(input_index=index, block_entropy_k2=H[1], saturation=sat)
+        records.append(est)
 
-            # Saturation detection using cached values
-            try:
-                sat_result = _detect_saturation_from_cache(H_cache, max_k, method=saturation_method)
-                saturation_results.append(sat_result)
-            except Exception as e:
-                warnings.warn(f"Failed saturation detection from cache: {e}", UserWarning)
-
-    # Aggregate results
-    saturation_agg = aggregate_saturation_results(saturation_results)
-
-    return {
-        'block_entropy_k2': block_entropies_k2,
-        'entropy_rate': entropy_rates,
-        'emc': emcs,
-        'saturation': saturation_agg,
-        'saturation_results_raw': saturation_results,  # For diagnostic plotting
-        'n_sequences_analyzed': len(valid_sequences),
-        'mean_sequence_length': np.mean([len(seq) for seq in valid_sequences])
+    fields = {
+        "entropy": "entropy",
+        "block_entropy_k2": "block_entropy_k2",
+        "entropy_rate": "entropy_rate",
+        "emc": "emc",
+        "emc_order": "order",
+        "emc_bias_estimate": "emc_bias_estimate",
+        "entropy_rate_bias_estimate": "entropy_rate_bias_estimate",
     }
+    result = {key: [_number_or_nan(r[field]) for r in records] for key, field in fields.items()}
+    result.update(
+        records=records,
+        input_indices=[r["input_index"] for r in records],
+        emc_bias_ok=[r["bias_ok"] for r in records],
+        emc_status=[r["status"] for r in records],
+        emc_order_method="bic" if emc_order == "bic" else "fixed",
+        saturation=aggregate_saturation_results(saturation_results),
+        saturation_results_raw=saturation_results,
+        n_sequences_analyzed=len(records),
+        mean_sequence_length=float(np.mean([r["n_symbols"] for r in records])) if records else 0.0,
+    )
+    diagnostics = Counter(reason for r in records for reason in r["warnings"])
+    if diagnostics:
+        logger.warning("Ensemble EMC diagnostics: %s. See records for statuses and limitations.", dict(diagnostics))
+    return result

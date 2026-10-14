@@ -10,14 +10,20 @@ This module contains the DyckGenerator class for creating k-Dyck languages.
 from __future__ import annotations
 
 import string
-from typing import Dict, List, Literal, Optional, Sequence
+from typing import ClassVar, Dict, List, Literal, Optional, Sequence
 
 import numpy as np
+
+from symseq.core.sequencer import SymbolicSequencer
+from symseq.generators.registry import register
+from symseq.trial import Target, Trial
+from symseq.utils.validation import is_integer
 
 Mode = Literal["stack", "uniform"]
 
 
-class DyckGenerator:
+@register("Dyck")
+class DyckGenerator(SymbolicSequencer):
     """
     Dyck-language generator with variable-length (stack) and fixed-length uniform modes.
 
@@ -98,6 +104,8 @@ class DyckGenerator:
     ['(', '[', ']', ')']
     """
 
+    intrinsic_target_granularities: ClassVar[dict[str, str]] = {"grammaticality": "per_trial"}
+
     def __init__(
         self,
         k: int,
@@ -109,6 +117,7 @@ class DyckGenerator:
         distractors: Sequence[str] | None = None,
         n_distractors: int = 2,
         rng: np.random.Generator | None = None,
+        seed: int | None = None,
         uniform_colorize: bool = True,
     ):
         self.k = k
@@ -121,7 +130,7 @@ class DyckGenerator:
         self.uniform_colorize = uniform_colorize
 
         # Validation
-        if not isinstance(k, int) or k < 1:
+        if not is_integer(k) or k < 1:
             raise ValueError("`k` must be a positive integer.")
 
         # Generate or use provided parentheses
@@ -158,22 +167,26 @@ class DyckGenerator:
                 )
 
         if self.rng is None:
-            self.rng = np.random.default_rng()
+            self.rng = np.random.default_rng(seed)
 
         if self.mode == "stack":
             if not (0.0 < self.p_open < 0.5):
                 raise ValueError("In 'stack' mode, p_open must be in (0, 0.5).")
         elif self.mode == "uniform":
-            if not (isinstance(self.target_pairs, int) and self.target_pairs > 0):
+            if not (is_integer(self.target_pairs) and self.target_pairs > 0):
                 raise ValueError("In 'uniform' mode, target_pairs must be a positive integer.")
         else:
             raise ValueError("mode must be 'stack' or 'uniform'.")
 
         if self.max_depth is not None:
-            if not (isinstance(self.max_depth, int) and self.max_depth > 0):
+            if not (is_integer(self.max_depth) and self.max_depth > 0):
                 raise ValueError("`max_depth` must be a positive integer or None.")
 
         self._compute_alphabet()
+
+        # Initialize SymbolicSequencer base with the computed alphabet and rng.
+        # This sets self.label / self.alphabet_size / re-confirms self.alphabet and self.rng.
+        super().__init__(label="Dyck", alphabet=self.alphabet, rng=self.rng, verbose=False)
 
     def _generate_default_parentheses(self, k: int) -> dict[str, str]:
         """
@@ -390,6 +403,50 @@ class DyckGenerator:
             for _ in range(n)
         ]
 
+    # ============================ Trial-based API ============================
+
+    def generate_trial(
+        self,
+        add_distractors: bool = False,
+        n_distractors: int = 0,
+        max_attempts: int = 1000,
+        grammatical: bool = True,
+        **kwargs,
+    ) -> Trial:
+        """Generate one Trial.
+
+        Trial.intrinsic_targets["grammaticality"] is a per-trial bool — True
+        for a valid k-Dyck string, False if produced by the non-grammatical
+        corruption procedure.
+        """
+        if grammatical:
+            symbols = self.generate_string(
+                add_distractors=add_distractors,
+                n_distractors=n_distractors,
+                max_attempts=max_attempts,
+            )
+            is_gram = True
+        else:
+            symbols = self.generate_nongrammatical_strings(
+                n=1,
+                add_distractors=add_distractors,
+                n_distractors=n_distractors,
+                max_attempts=max_attempts,
+                **kwargs,
+            )[0]
+            is_gram = False
+
+        intrinsic_targets = {
+            "grammaticality": Target(values=is_gram, mask=None, granularity="per_trial"),
+        }
+        meta = {
+            "paradigm": "Dyck",
+            "k": self.k,
+            "mode": self.mode,
+            "length": len(symbols),
+        }
+        return Trial(symbols=symbols, meta=meta, intrinsic_targets=intrinsic_targets)
+
     def generate_nongrammatical_strings(
         self,
         n: int,
@@ -558,7 +615,9 @@ class DyckGenerator:
 
         if strategy == "truncate":
             if len(t) > 1:
-                cut = int(self.rng.integers(1, len(t)))
+                invalid_cuts = [cut for cut in range(1, len(t)) if not self._is_valid_dyck(t[:cut])]
+                cuts = invalid_cuts or list(range(1, len(t)))
+                cut = int(self._choice(cuts))
                 t = t[:cut]
             return t
 

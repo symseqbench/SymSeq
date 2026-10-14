@@ -7,7 +7,7 @@ Comprehensive test suite for the nAX class.
 import numpy as np
 import pytest
 
-from symseq.grammars.nax import nAX
+from symseq.generators.nax import nAX
 
 
 class TestInitialization:
@@ -314,6 +314,23 @@ class TestStringGeneration:
         for string in strings:
             assert len(string) == 5  # context + cue + 2 fillers + probe
 
+    def test_context_probs_control_generated_context(self):
+        """Test that context probabilities control the realized trial context."""
+        gen = nAX(context_probs=(1.0, 0.0), seed=42)
+
+        strings = gen.generate_string_set(n_samples=50, n_fillers=0)
+
+        assert {string[0] for string in strings} == {"1"}
+
+    @pytest.mark.parametrize(("p_target", "expected_is_target"), [(0.0, False), (1.0, True)])
+    def test_extreme_target_probabilities_control_generated_trials(self, p_target, expected_is_target):
+        """Test that extreme target probabilities control realized target status."""
+        gen = nAX(p_target=p_target, seed=42)
+
+        strings = gen.generate_string_set(n_samples=50, n_fillers=2)
+
+        assert all(gen.label_trial(string)[1] is expected_is_target for string in strings)
+
 
 class TestTrialLabeling:
     """Tests for trial labeling functionality."""
@@ -465,9 +482,8 @@ class TestTargetLureDistribution:
                 n_targets += 1
 
         target_rate = n_targets / n_samples
-        # Should be approximately 0.7 (allow variance due to grammar structure)
-        # The actual distribution is affected by the grammar's transition probabilities
-        assert 0.5 <= target_rate <= 0.85
+        # Should be approximately 0.7, allowing for sampling variance.
+        assert 0.64 <= target_rate <= 0.76
 
     def test_equal_target_lure_probability(self):
         """Test with equal target and lure probabilities."""
@@ -694,6 +710,79 @@ class TestVerboseMode:
         """Test default non-verbose mode."""
         gen = nAX()
         assert gen.verbose is False
+
+
+class TestTrialAPI:
+    """Tests for the Trial-based API (generate_trial / draw_trial)."""
+
+    def test_generate_trial_returns_trial(self):
+        from symseq.trial import Trial, Target
+
+        gen = nAX(seed=42)
+        trial = gen.generate_trial()
+        assert isinstance(trial, Trial)
+        assert len(trial.symbols) >= 3
+        assert len(trial.states) == len(trial.symbols)
+        # AG-level + nAX-level intrinsic targets
+        assert isinstance(trial.intrinsic_targets["grammaticality"], Target)
+        assert isinstance(trial.intrinsic_targets["nax_label"], Target)
+        assert isinstance(trial.intrinsic_targets["nax_is_target"], Target)
+
+    def test_nax_label_matches_label_trial(self):
+        gen = nAX(seed=42)
+        trial = gen.generate_trial()
+        label_legacy, is_target_legacy = gen.label_trial(trial.symbols)
+        assert trial.intrinsic_targets["nax_label"].values == label_legacy
+        assert trial.intrinsic_targets["nax_is_target"].values == is_target_legacy
+
+    def test_nax_targets_granularity_per_trial(self):
+        gen = nAX(seed=42)
+        trial = gen.generate_trial()
+        for key in ("grammaticality", "nax_label", "nax_is_target"):
+            assert trial.intrinsic_targets[key].granularity == "per_trial"
+            assert trial.intrinsic_targets[key].mask is None
+
+    def test_meta_paradigm_is_nax_not_ag(self):
+        gen = nAX(seed=42)
+        trial = gen.generate_trial()
+        assert trial.meta["paradigm"] == "nAX"
+        assert trial.meta["n_contexts"] == len(gen.contexts)
+
+    def test_generate_trials_batch(self):
+        from symseq.trial import Trial
+
+        gen = nAX(seed=42)
+        trials = gen.generate_trials(n=4)
+        assert len(trials) == 4
+        assert all(isinstance(t, Trial) for t in trials)
+
+    def test_draw_trial_and_draw_batch_protocol(self):
+        from symseq.trial import Trial
+        from symseq.trial_source import TrialSource
+
+        gen = nAX(seed=42)
+        assert isinstance(gen, TrialSource)
+        t = gen.draw_trial()
+        assert isinstance(t, Trial)
+        batch = gen.draw_batch(3)
+        assert len(batch) == 3 and all(isinstance(b, Trial) for b in batch)
+
+    def test_same_seed_reproducible_trial(self):
+        g1 = nAX(seed=2026)
+        g2 = nAX(seed=2026)
+        t1 = g1.generate_trial()
+        t2 = g2.generate_trial()
+        assert t1.symbols == t2.symbols
+        assert t1.intrinsic_targets["nax_label"].values == t2.intrinsic_targets["nax_label"].values
+
+    def test_registry_builds_nax(self):
+        from symseq.generators.registry import build, registered_names
+        from symseq.trial import Trial
+
+        assert "nAX" in registered_names()
+        gen = build("nAX", seed=42)
+        assert isinstance(gen, nAX)
+        assert isinstance(gen.generate_trial(), Trial)
 
 
 if __name__ == "__main__":
