@@ -305,6 +305,7 @@ class ArtificialGrammar(SymbolicSequencer):
         seed: int = 42,
         verbose: bool = False,
         target_complexity: float | None = None,
+        restricted: bool = False,
         **synthesis_kwargs,
     ) -> ArtificialGrammar:
         """
@@ -346,6 +347,9 @@ class ArtificialGrammar(SymbolicSequencer):
         target_complexity : float, optional
             Target topological-entropy complexity of the grammar. If None, the grammar is drawn randomly under the
             constraints above; otherwise it is synthesized to match this complexity. Defaults to None.
+        restricted : bool, optional
+            For random generation, allow at most one outgoing target per observable
+            symbol from each state. Defaults to False.
         **synthesis_kwargs
             Additional arguments forwarded to `grammar_with_complexity`. Only used if `target_complexity` is not None.
 
@@ -371,6 +375,7 @@ class ArtificialGrammar(SymbolicSequencer):
                 rng=rng,
                 seed=seed,
                 verbose=verbose,
+                restricted=restricted,
             )
             return cls(rng=rng, seed=seed, verbose=verbose, **grammar_pars)
         else:

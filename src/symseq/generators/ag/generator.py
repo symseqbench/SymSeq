@@ -61,6 +61,7 @@ def generate_random_grammar(
     rng: np.random.Generator | None = None,
     seed: int = 42,
     verbose: bool = True,
+    restricted: bool = False,
 ) -> dict:
     """
     Generate the parameter dictionary for an artificial grammar following the specified constraints and properties. Formally, each grammatical (valid) string will end with the EOS symbol.
@@ -93,6 +94,8 @@ def generate_random_grammar(
         Random seed for reproducibility, default is 42. This parameter is ignored if `rng` is not None.
     verbose : bool
         Display progress information.
+    restricted : bool
+        Sample at most one outgoing target per observable symbol for each state.
 
     Returns
     -------
@@ -116,16 +119,20 @@ def generate_random_grammar(
     while valid_grammar is False and cnt < max_iter:
         # list of states (possibly indexed symbols). NOTE: here we use Python str type for states, not core.state.State
         states = alphabet.copy()
+        states_rep = alphabet.copy()
 
         if ambiguities:
             repeatable_symbols = list(random.sample(alphabet, ambiguities))  # which symbols can repeat
 
             # how many repetitions?
             for symb in repeatable_symbols:
-                states.remove(symb)
+                index = states.index(symb)
+                states.pop(index)
+                states_rep.pop(index)
                 # replace each repeatable symbol with indexed states
                 new_states = [State(symb, index=i).tostring() for i in range(ambiguity_depth)]
                 states.extend(new_states)
+                states_rep.extend([symb] * len(new_states))
 
         states_no_eos = copy.deepcopy(states)
         states.append(eos)  # EOS belongs to the states but not to the alphabet
@@ -136,7 +143,10 @@ def generate_random_grammar(
         terminal_states = list(rng.choice(states_no_eos, n_terminal_states, replace=False).astype(object))
         assert states[-1] == eos, "EOS should have been the last added state."
 
-        G = init_graph(states_no_eos, start_states, terminal_states, transition_density, rng)
+        if restricted:
+            G = init_restricted_graph(states_no_eos, states_rep, alphabet, transition_density, rng)
+        else:
+            G = init_graph(states_no_eos, start_states, terminal_states, transition_density, rng)
         if G is None:
             cnt += 1
             continue
@@ -152,8 +162,10 @@ def generate_random_grammar(
         for u, v in G.edges:
             A[state_to_idx[u], state_to_idx[v]] = 1
 
-        # ensure that there are no states with zero input transitions (every state must be reachable)
-        assert np.all(np.sum(A, 0))
+        # Restricted samples may have zero indegree; the validity check below
+        # checks actual reachability and retries invalid graphs.
+        if not restricted:
+            assert np.all(np.sum(A, 0))
 
         # assume equiprobable transitions
         if assume_equiprobable:
@@ -185,6 +197,43 @@ def generate_random_grammar(
         "transitions": transitions,
         "eos": eos,
     }
+
+
+def init_restricted_graph(
+    states_no_eos,
+    states_rep,
+    alphabet,
+    transition_density,
+    rng,
+):
+    G = nx.DiGraph()
+    G.add_nodes_from(states_no_eos)
+
+    states_rep_array = np.asarray(states_rep)
+
+     # The following simply implement:
+     #for src in states_no_eos:
+     #   for a in alphabet:
+     #       x = np.where(states_rep_array == a)[0]
+     #       y = rng.permutation(len(x))[0]
+     #       index = x[y]
+     #       if rng.random() < len(x) * transition_density:
+     #           G.add_edge(src, states_no_eos[index])
+
+    symbol_to_indices = {
+        a: np.flatnonzero(states_rep_array == a)
+        for a in alphabet
+    }
+
+    for src in states_no_eos:
+        for indices in symbol_to_indices.values():
+            probability = min(1.0, len(indices) * transition_density)
+
+            if rng.random() < probability:
+                target_idx = rng.choice(indices)
+                G.add_edge(src, states_no_eos[target_idx])
+
+    return G
 
 
 def init_graph(states_no_eos, start_states, terminal_states, transition_density, rng):
