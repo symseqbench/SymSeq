@@ -306,6 +306,7 @@ class ArtificialGrammar(SymbolicSequencer):
         verbose: bool = False,
         target_complexity: float | None = None,
         restricted: bool = False,
+        graph_init: str = "tree",
         **synthesis_kwargs,
     ) -> ArtificialGrammar:
         """
@@ -327,13 +328,15 @@ class ArtificialGrammar(SymbolicSequencer):
             Number of initial states. Defaults to 1.
         n_terminal_states : int, optional
             Number of terminal states corresponding to regular symbols (not EOS), with direct transitions to the
-            terminal state (EOS). Defaults to 1.
+            terminal state (EOS). Start and terminal states are drawn independently, so a state can be both, which
+            makes its symbol a valid one-symbol string; set ``min_string_length >= 2`` to exclude this. Defaults to 1.
         transition_density : float, optional
             Density of the transition matrix. Defaults to 0.25.
         assume_equiprobable : bool, optional
             Assume equiprobable outgoing transitions from each state. Defaults to True.
         min_string_length : int, optional
-            Minimum length of valid strings in the grammar. Defaults to 1.
+            Minimum length of valid strings in the grammar. Values of 2 or more also exclude grammars in which a
+            start state is a terminal state. Defaults to 1.
         max_iter : int, optional
             Maximum number of attempts to generate a valid grammar. Defaults to 1e5.
         eos : str, optional
@@ -348,8 +351,16 @@ class ArtificialGrammar(SymbolicSequencer):
             Target topological-entropy complexity of the grammar. If None, the grammar is drawn randomly under the
             constraints above; otherwise it is synthesized to match this complexity. Defaults to None.
         restricted : bool, optional
-            For random generation, allow at most one outgoing target per observable
-            symbol from each state. Defaults to False.
+            For random generation, allow at most one outgoing target per observable symbol from each state. In this
+            mode `transition_density` is a per-slot probability rather than a fraction of all state pairs. Requires
+            ``graph_init="tree"`` and cannot be combined with `target_complexity`. Defaults to False.
+        graph_init : {"tree", "cycle"}, optional
+            Sampler of the underlying transition graph for random generation (ignored if `target_complexity` is
+            given). ``"tree"`` samples trim grammars (every state reachable from a start state and able to reach
+            EOS) from random spanning forests; they need not be strongly connected, so start states may have no
+            incoming transitions. ``"cycle"`` is the legacy sampler that plants a Hamiltonian ring and always
+            yields strongly connected grammars (including L = L+ for one start and one terminal state); it is kept
+            to reproduce earlier results. Defaults to ``"tree"``.
         **synthesis_kwargs
             Additional arguments forwarded to `grammar_with_complexity`. Only used if `target_complexity` is not None.
 
@@ -358,7 +369,15 @@ class ArtificialGrammar(SymbolicSequencer):
         ArtificialGrammar
             The ArtificialGrammar object. When `target_complexity` is given, the achieved complexity and related
             synthesis diagnostics are stored in the ``metadata`` attribute.
+
+        Raises
+        ------
+        ValueError
+            If `restricted` is True and `target_complexity` is given, if `graph_init` is not ``"tree"`` or
+            ``"cycle"``, or if ``restricted=True`` is combined with ``graph_init="cycle"``.
         """
+        if restricted and target_complexity is not None:
+            raise ValueError("restricted=True is not supported together with target_complexity (it would be ignored).")
         if target_complexity is None:
             grammar_pars = generate_random_grammar(
                 label=label,
@@ -376,6 +395,7 @@ class ArtificialGrammar(SymbolicSequencer):
                 seed=seed,
                 verbose=verbose,
                 restricted=restricted,
+                graph_init=graph_init,
             )
             return cls(rng=rng, seed=seed, verbose=verbose, **grammar_pars)
         else:
