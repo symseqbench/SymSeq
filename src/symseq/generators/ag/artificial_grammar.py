@@ -307,6 +307,7 @@ class ArtificialGrammar(SymbolicSequencer):
         target_complexity: float | None = None,
         restricted: bool = False,
         graph_init: str = "tree",
+        reject_equivalent_copies: bool = False,
         **synthesis_kwargs,
     ) -> ArtificialGrammar:
         """
@@ -351,8 +352,13 @@ class ArtificialGrammar(SymbolicSequencer):
             Target topological-entropy complexity of the grammar. If None, the grammar is drawn randomly under the
             constraints above; otherwise it is synthesized to match this complexity. Defaults to None.
         restricted : bool, optional
-            For random generation, allow at most one outgoing target per observable symbol from each state. In this
-            mode `transition_density` is a per-slot probability rather than a fraction of all state pairs. Requires
+            For random generation, allow at most one outgoing target per observable symbol from each state. The
+            restricted sampler is the default sampler conditioned on this rule: uniform over trim graphs with exactly
+            ``ceil(n^2 * transition_density)`` edges, with the same meaning of `transition_density` and the same
+            edge count as in unrestricted mode. A slot of a symbol with ``k`` copies can be filled in ``k`` ways,
+            so such a symbol is the next symbol more often than a single-copy symbol, but less than ``k`` times as
+            often, and each copy receives fewer in-edges than a single-copy state (the copies share one slot per
+            source; the gap grows with density). Symbol-neutral sampling is not implemented. Requires
             ``graph_init="tree"`` and cannot be combined with `target_complexity`. Defaults to False.
         graph_init : {"tree", "cycle"}, optional
             Sampler of the underlying transition graph for random generation (ignored if `target_complexity` is
@@ -361,6 +367,12 @@ class ArtificialGrammar(SymbolicSequencer):
             incoming transitions. ``"cycle"`` is the legacy sampler that plants a Hamiltonian ring and always
             yields strongly connected grammars (including L = L+ for one start and one terminal state); it is kept
             to reproduce earlier results. Defaults to ``"tree"``.
+        reject_equivalent_copies : bool, optional
+            For random generation, reject (and retry) grammars in which two states emitting the same symbol are
+            bisimilar. Such copies generate the same future strings, so the nominal ambiguity has no effect. For
+            restricted grammars the check is exact (copies are language-equivalent iff bisimilar); for non-restricted
+            grammars it is only sufficient. Cannot be combined with
+            `target_complexity`. Defaults to False.
         **synthesis_kwargs
             Additional arguments forwarded to `grammar_with_complexity`. Only used if `target_complexity` is not None.
 
@@ -373,11 +385,15 @@ class ArtificialGrammar(SymbolicSequencer):
         Raises
         ------
         ValueError
-            If `restricted` is True and `target_complexity` is given, if `graph_init` is not ``"tree"`` or
-            ``"cycle"``, or if ``restricted=True`` is combined with ``graph_init="cycle"``.
+            If `restricted` or `reject_equivalent_copies` is True and `target_complexity` is given, if `graph_init` is
+            not ``"tree"`` or ``"cycle"``, or if ``restricted=True`` is combined with ``graph_init="cycle"``.
         """
         if restricted and target_complexity is not None:
             raise ValueError("restricted=True is not supported together with target_complexity (it would be ignored).")
+        if reject_equivalent_copies and target_complexity is not None:
+            raise ValueError(
+                "reject_equivalent_copies=True is not supported together with target_complexity (it would be ignored)."
+            )
         if target_complexity is None:
             grammar_pars = generate_random_grammar(
                 label=label,
@@ -396,6 +412,7 @@ class ArtificialGrammar(SymbolicSequencer):
                 verbose=verbose,
                 restricted=restricted,
                 graph_init=graph_init,
+                reject_equivalent_copies=reject_equivalent_copies,
             )
             return cls(rng=rng, seed=seed, verbose=verbose, **grammar_pars)
         else:

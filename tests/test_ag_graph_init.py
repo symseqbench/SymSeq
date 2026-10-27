@@ -14,6 +14,7 @@ import symseq.generators.ag.artificial_grammar as artificial_grammar_module
 from symseq.config import load_trial_set
 from symseq.generators.ag import ArtificialGrammar
 from symseq.generators.ag.generator import (
+    _has_equivalent_copies,
     _sample_rooted_forest,
     generate_random_grammar,
     init_restricted_graph,
@@ -149,18 +150,22 @@ def test_trim_property(config, mode, restricted):
 # --------------------- 2. edge counts and restricted slots ---------------------
 
 
+@pytest.mark.parametrize("restricted", [False, True], ids=["tree", "restricted"])
 @pytest.mark.parametrize("config", CONFIGS, ids=lambda c: "a{}_amb{}x{}_d{}_s{}_t{}".format(*c))
-def test_tree_mode_exact_edge_count(config):
+def test_exact_edge_count(config, restricted):
+    """Both modes realise exactly ceil(n^2 d) non-EOS edges (same d -> same edge count)."""
     alphabet, amb, depth, density, _, _ = config
     n = alphabet - amb + amb * depth
     expected = math.ceil(n * n * density)
     for seed in range(N_SEEDS):
-        params = _random_params(config, seed)
+        params = _random_params(config, seed, restricted=restricted)
         n_edges = sum(1 for _, v, _ in params["transitions"] if v != EOS)
         assert n_edges == expected
 
 
-@pytest.mark.parametrize("config", [c for c in CONFIGS if c[1] > 0] + CONFIGS[:2], ids=lambda c: "a{}_amb{}_d{}".format(c[0], c[1], c[3]))
+@pytest.mark.parametrize(
+    "config", [c for c in CONFIGS if c[1] > 0] + CONFIGS[:2], ids=lambda c: "a{}_amb{}_d{}".format(c[0], c[1], c[3])
+)
 def test_restricted_mode_one_target_per_slot(config):
     for seed in range(N_SEEDS):
         params = _random_params(config, seed, restricted=True)
@@ -238,13 +243,13 @@ def test_direct_tree_and_restricted_inits_are_trim(starts, terminals, density):
 
     rep = ["A", "B", "B", "C", "D"]  # states b and c share the symbol B
     got = 0
+    idx = {v: i for i, v in enumerate(NODES5)}
     for _ in range(100):
         G = init_restricted_graph(NODES5, rep, ["A", "B", "C", "D"], starts, terminals, density, rng)
         if G is None:
             continue
         got += 1
-        idx = {v: i for i, v in enumerate(NODES5)}
-        assert _is_trim_edges([(idx[u], idx[v]) for u, v in G.edges], 5, [idx[s] for s in starts], [idx[t] for t in terminals])
+        _assert_trim_graph(G, NODES5, starts, terminals, m)
         slots = Counter((u, rep[idx[v]]) for u, v in G.edges)
         assert max(slots.values()) == 1
     assert got > 0
@@ -268,6 +273,46 @@ def test_tree_graph_at_minimum_edge_count(starts, terminals):
     rng = np.random.default_rng(11)
     for _ in range(10):
         _assert_trim_graph(_sample_tree(NODES5, starts, terminals, density, rng), NODES5, starts, terminals, m)
+
+
+@pytest.mark.parametrize(
+    "starts,terminals",
+    [(["a"], ["e"]), (["b", "c"], ["c", "d"]), (["c"], ["c"]), (["a", "b"], ["a", "b"]), (["a"], ["b", "c"])],
+    ids=lambda x: "".join(x),
+)
+def test_restricted_graph_at_minimum_and_maximum_edge_count(starts, terminals):
+    rep = ["A", "B", "B", "C", "C"]  # symbols with 1, 2 and 2 copies; 5 states x 3 symbols = 15 slots
+    alphabet = ["A", "B", "C"]
+    n = len(NODES5)
+    rng = np.random.default_rng(3)
+    for m in (_m_min(n, starts, terminals), 15):
+        density = (m - 0.5) / (n * n)  # ceil(n^2 d) == m
+        got = 0
+        for _ in range(60):
+            G = init_restricted_graph(NODES5, rep, alphabet, starts, terminals, density, rng)
+            if G is None:
+                continue
+            got += 1
+            _assert_trim_graph(G, NODES5, starts, terminals, m)
+        assert got > 0
+
+
+def test_restricted_graph_raises_outside_edge_range():
+    rep = ["A", "B", "B", "C", "C"]
+    alphabet = ["A", "B", "C"]
+    rng = np.random.default_rng(0)
+    n, n_slots = 5, 15
+    with pytest.raises(ValueError, match="slots"):  # m = n_slots + 1
+        init_restricted_graph(NODES5, rep, alphabet, ["a"], ["e"], (n_slots + 0.5) / (n * n), rng)
+    with pytest.raises(ValueError, match="density too low"):  # m = 3 < 4
+        init_restricted_graph(NODES5, rep, alphabet, ["a"], ["e"], 0.1, rng)
+    with pytest.raises(ValueError, match="density too low"):  # S == T, n > |S|: floor is 5
+        init_restricted_graph(NODES5, rep, alphabet, ["c"], ["c"], (4 - 0.5) / (n * n), rng)
+    with pytest.raises(ValueError, match="slots"):  # n = 6 states, 4 symbols: 24 slots < ceil(36 * 0.8) = 29 edges
+        generate_random_grammar(
+            alphabet_size=4, ambiguities=2, ambiguity_depth=2, transition_density=0.8, verbose=False, restricted=True
+        )
+    generate_random_grammar(alphabet_size=4, transition_density=1.0, verbose=False, restricted=True)  # all 16 slots
 
 
 def test_tree_graph_equal_start_terminal_needs_extra_edge():
@@ -339,18 +384,19 @@ def test_density_below_minimum_raises():
         init_tree_graph(NODES5, ["a"], ["e"], 1.2, rng)  # m > n^2
 
 
-def test_low_density_warns_in_tree_mode():
+@pytest.mark.parametrize("restricted", [False, True], ids=["tree", "restricted"])
+def test_low_density_warns(restricted):
     # n = 6, m = ceil(36 * 0.2) = 8 < 1.5 * 6
     with pytest.warns(UserWarning, match="chain-like"):
-        generate_random_grammar(alphabet_size=6, transition_density=0.2, verbose=False)
+        generate_random_grammar(alphabet_size=6, transition_density=0.2, verbose=False, restricted=restricted)
 
 
 def test_no_low_density_warning_otherwise():
     with warnings.catch_warnings():
         warnings.simplefilter("error")
         generate_random_grammar(alphabet_size=6, transition_density=0.35, verbose=False)  # m = 13 >= 9
+        generate_random_grammar(alphabet_size=6, transition_density=0.35, verbose=False, restricted=True)
         generate_random_grammar(alphabet_size=6, transition_density=0.2, verbose=False, graph_init="cycle")
-        generate_random_grammar(alphabet_size=6, transition_density=0.2, verbose=False, restricted=True)
 
 
 def _capture_generate_random_grammar(monkeypatch):
@@ -443,7 +489,106 @@ def test_edge_swap_chain_is_uniform_on_tiny_case(m, n_samples):
     assert p > 1e-3, f"chi2={chi2:.1f}, p={p:.2e}, {len(support)} cells"
 
 
-# --------------------- 8. Wilson's algorithm ---------------------
+def _restricted_edge_sets(n, labels, starts, terminals, m):
+    """All trim edge sets with m edges and at most one edge per slot (source, symbol of target)."""
+    pairs = [(u, v) for u in range(n) for v in range(n)]
+    return {
+        frozenset(c)
+        for c in itertools.combinations(pairs, m)
+        if len({(u, labels[v]) for u, v in c}) == m and _is_trim_edges(c, n, starts, terminals)
+    }
+
+
+def _restricted_chi2_pvalue(n_swap_steps, start="A0", terminal="B", n_support=22, n_samples=4400):
+    """Chi-square p-value of init_restricted_graph against uniform on a tiny case; also checks the support."""
+    nodes, rep = ["A0", "A1", "B"], ["A", "A", "B"]  # A has two copies
+    m = 4
+    support = _restricted_edge_sets(3, [0, 0, 1], [nodes.index(start)], [nodes.index(terminal)], m)
+    assert len(support) == n_support
+    rng = np.random.default_rng(2024)
+    counts = Counter()
+    while sum(counts.values()) < n_samples:
+        G = init_restricted_graph(
+            nodes, rep, ["A", "B"], [start], [terminal], (m - 0.5) / 9, rng, n_swap_steps=n_swap_steps
+        )  # ceil(9 d) == m
+        if G is not None:
+            counts[frozenset((nodes.index(u), nodes.index(v)) for u, v in G.edges)] += 1
+    assert set(counts) == support
+    return stats.chisquare([counts[e] for e in support]).pvalue
+
+
+@pytest.mark.parametrize("start,terminal,n_support", [("A0", "B", 22), ("B", "A0", 15)])
+def test_restricted_sampler_is_uniform_on_tiny_case(start, terminal, n_support):
+    """Uniform over trim restricted edge sets, i.e. the default sampler conditioned on the slot rule."""
+    p = _restricted_chi2_pvalue(None, start, terminal, n_support)
+    assert p > 1e-3, f"p={p:.2e}"
+
+
+def test_restricted_uniformity_test_has_power():
+    """Without the swap chain the initial graphs are far from uniform, which the test above must detect."""
+    p = _restricted_chi2_pvalue(n_swap_steps=0)
+    assert p < 1e-3, f"p={p:.2e}"
+
+
+# --------------------- 8. rejection of bisimilar copies ---------------------
+
+
+def _hand_built(edges):
+    states = ["B", "A(0)", "A(1)", "C", EOS]
+    return states, [(u, v, 1.0) for u, v in edges]
+
+
+def test_has_equivalent_copies_detects_bisimilar_copies():
+    # A(0) and A(1) both go to C, and C leads on to A(1) and EOS: the copies are interchangeable
+    states, transitions = _hand_built([("B", "A(0)"), ("A(0)", "C"), ("A(1)", "C"), ("C", "A(1)"), ("C", EOS)])
+    assert _has_equivalent_copies(states, transitions, EOS)
+
+
+def test_has_equivalent_copies_accepts_genuine_ambiguity():
+    # the copies differ in their futures: A(0) goes on to C, A(1) ends the string
+    states, transitions = _hand_built([("B", "A(0)"), ("A(0)", "C"), ("C", "A(1)"), ("A(1)", EOS)])
+    assert not _has_equivalent_copies(states, transitions, EOS)
+
+
+def test_reject_equivalent_copies_removes_bisimilar_copies():
+    for seed in range(30):
+        params = generate_random_grammar(
+            alphabet_size=4,
+            ambiguities=2,
+            ambiguity_depth=2,
+            transition_density=0.5,
+            seed=seed,
+            verbose=False,
+            restricted=True,
+            reject_equivalent_copies=True,
+        )
+        assert not _has_equivalent_copies(params["states"], params["transitions"], EOS)
+
+
+def test_reject_equivalent_copies_off_is_identical():
+    kwargs = dict(alphabet_size=4, ambiguities=2, ambiguity_depth=2, transition_density=0.4, verbose=False)
+    for restricted in (False, True):
+        for seed in range(10):
+            default = generate_random_grammar(seed=seed, restricted=restricted, **kwargs)
+            off = generate_random_grammar(seed=seed, restricted=restricted, reject_equivalent_copies=False, **kwargs)
+            assert default == off
+
+
+def test_reject_equivalent_copies_with_target_complexity_raises():
+    with pytest.raises(ValueError, match="target_complexity"):
+        ArtificialGrammar.from_constraints(reject_equivalent_copies=True, target_complexity=1.0, verbose=False)
+
+
+def test_reject_equivalent_copies_forwarded_by_from_constraints(monkeypatch):
+    calls = _capture_generate_random_grammar(monkeypatch)
+    ArtificialGrammar.from_constraints(alphabet_size=5, transition_density=0.4, verbose=False)
+    ArtificialGrammar.from_constraints(
+        alphabet_size=5, transition_density=0.4, reject_equivalent_copies=True, verbose=False
+    )
+    assert [c["reject_equivalent_copies"] for c in calls] == [False, True]
+
+
+# --------------------- 9. Wilson's algorithm ---------------------
 
 
 def _all_rooted_forests(nodes, roots):
