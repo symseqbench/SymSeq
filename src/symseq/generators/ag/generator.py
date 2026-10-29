@@ -62,7 +62,7 @@ def generate_random_grammar(
     rng: np.random.Generator | None = None,
     seed: int = 42,
     verbose: bool = True,
-    restricted: bool = False,
+    enforce_unifilarity: bool = False,
     graph_init: str = "tree",
     reject_equivalent_copies: bool = False,
 ) -> dict:
@@ -101,27 +101,27 @@ def generate_random_grammar(
         Random seed for reproducibility, default is 42. This parameter is ignored if `rng` is not None.
     verbose : bool
         Display progress information.
-    restricted : bool
-        Sample at most one outgoing target per observable symbol for each state. The restricted sampler is the default
-        sampler conditioned on this rule: uniform over trim graphs with exactly ``ceil(n^2 * transition_density)``
-        edges, with the same meaning of `transition_density` and the same edge count as in unrestricted mode (see
-        :func:`init_restricted_graph`). A slot of a symbol with ``k`` copies can be filled in ``k`` ways, so such a
-        symbol is the next symbol more often than a single-copy symbol, but less than ``k`` times as often, and each
-        copy receives fewer in-edges than a single-copy state (the copies share one slot per source; the gap grows
-        with density). Symbol-neutral sampling is not implemented. Only supported with
-        ``graph_init="tree"``.
+    enforce_unifilarity : bool
+        Sample at most one outgoing target per observable symbol for each state. The unifilar sampler is the
+        default sampler conditioned on this rule: uniform over trim graphs with exactly
+        ``ceil(n^2 * transition_density)`` edges, with the same meaning of `transition_density` and the same edge
+        count as in non-unifilar mode (see :func:`init_restricted_graph`). A slot of a symbol with ``k`` copies can
+        be filled in ``k`` ways, so such a symbol is the next symbol more often than a single-copy symbol, but less
+        than ``k`` times as often, and each copy receives fewer in-edges than a single-copy state (the copies share
+        one slot per source; the gap grows with density). Symbol-neutral sampling is not implemented. Only supported
+        with ``graph_init="tree"``.
     graph_init : {"tree", "cycle"}
         Sampler for the underlying transition graph. ``"tree"`` (default) starts from a random spanning out-forest
         rooted at the start states and a random spanning in-forest rooted at the terminal states, so that grammars
         need not be strongly connected (start states may have no incoming transitions). ``"cycle"`` is the legacy
         sampler that plants a random Hamiltonian ring, always yielding strongly connected grammars; it is kept for
-        reproducibility of earlier results and is incompatible with ``restricted=True``.
+        reproducibility of earlier results and is incompatible with ``enforce_unifilarity=True``.
     reject_equivalent_copies : bool
         Reject (and retry, counting towards `max_iter`) grammars in which two states emitting the same symbol are
-        bisimilar. Such copies generate the same future strings, so the nominal ambiguity has no effect. For restricted
-        grammars (deterministic per symbol) the check is exact: copies are language-equivalent iff bisimilar. For
-        non-restricted grammars it is only sufficient, so some language-equivalent copies are not rejected.
-        Does not consume random numbers. Default False.
+        bisimilar. Such copies generate the same future strings, so the nominal ambiguity has no effect. For
+        unifilar grammars (deterministic per symbol) the check is exact: copies are language-equivalent iff
+        bisimilar. For non-unifilar grammars it is only sufficient, so some language-equivalent copies are not
+        rejected. Does not consume random numbers. Default False.
 
     Returns
     -------
@@ -131,14 +131,14 @@ def generate_random_grammar(
     Raises
     ------
     ValueError
-        If `graph_init` is not ``"tree"`` or ``"cycle"``, if ``restricted=True`` is combined with
+        If `graph_init` is not ``"tree"`` or ``"cycle"``, if ``enforce_unifilarity=True`` is combined with
         ``graph_init="cycle"``, or (tree sampler) if the requested density is too low to admit a trim grammar or
-        requires more edges than available (``n^2``, or ``n * alphabet_size`` slots if ``restricted=True``).
+        requires more edges than available (``n^2``, or ``n * alphabet_size`` slots if ``enforce_unifilarity=True``).
 
     Warns
     -----
     UserWarning
-        If ``graph_init="tree"`` (restricted or not) and the requested number of edges is below ``1.5 * n``
+        If ``graph_init="tree"`` (unifilar or not) and the requested number of edges is below ``1.5 * n``
         (``n`` being the number of non-EOS states), where valid grammars are necessarily chain-like and the edge-swap
         chain mixes poorly.
 
@@ -149,8 +149,8 @@ def generate_random_grammar(
     """
     if graph_init not in ("tree", "cycle"):
         raise ValueError(f"graph_init must be 'tree' or 'cycle', got {graph_init!r}.")
-    if restricted and graph_init == "cycle":
-        raise ValueError("restricted=True is not supported with graph_init='cycle'; use graph_init='tree'.")
+    if enforce_unifilarity and graph_init == "cycle":
+        raise ValueError("enforce_unifilarity=True is not supported with graph_init='cycle'; use graph_init='tree'.")
 
     if rng is None:
         rng = np.random.default_rng(seed)
@@ -204,7 +204,7 @@ def generate_random_grammar(
 
         if graph_init == "cycle":
             G = init_cycle_graph(states_no_eos, start_states, terminal_states, transition_density, rng)
-        elif restricted:
+        elif enforce_unifilarity:
             G = init_restricted_graph(
                 states_no_eos, states_rep, alphabet, start_states, terminal_states, transition_density, rng
             )

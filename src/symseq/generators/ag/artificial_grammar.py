@@ -305,7 +305,7 @@ class ArtificialGrammar(SymbolicSequencer):
         seed: int = 42,
         verbose: bool = False,
         target_complexity: float | None = None,
-        restricted: bool = False,
+        enforce_unifilarity: bool = False,
         graph_init: str = "tree",
         reject_equivalent_copies: bool = False,
         **synthesis_kwargs,
@@ -351,11 +351,11 @@ class ArtificialGrammar(SymbolicSequencer):
         target_complexity : float, optional
             Target topological-entropy complexity of the grammar. If None, the grammar is drawn randomly under the
             constraints above; otherwise it is synthesized to match this complexity. Defaults to None.
-        restricted : bool, optional
+        enforce_unifilarity : bool, optional
             For random generation, allow at most one outgoing target per observable symbol from each state. The
-            restricted sampler is the default sampler conditioned on this rule: uniform over trim graphs with exactly
+            unifilar sampler is the default sampler conditioned on this rule: uniform over trim graphs with exactly
             ``ceil(n^2 * transition_density)`` edges, with the same meaning of `transition_density` and the same
-            edge count as in unrestricted mode. A slot of a symbol with ``k`` copies can be filled in ``k`` ways,
+            edge count as in non-unifilar mode. A slot of a symbol with ``k`` copies can be filled in ``k`` ways,
             so such a symbol is the next symbol more often than a single-copy symbol, but less than ``k`` times as
             often, and each copy receives fewer in-edges than a single-copy state (the copies share one slot per
             source; the gap grows with density). Symbol-neutral sampling is not implemented. Requires
@@ -370,7 +370,7 @@ class ArtificialGrammar(SymbolicSequencer):
         reject_equivalent_copies : bool, optional
             For random generation, reject (and retry) grammars in which two states emitting the same symbol are
             bisimilar. Such copies generate the same future strings, so the nominal ambiguity has no effect. For
-            restricted grammars the check is exact (copies are language-equivalent iff bisimilar); for non-restricted
+            unifilar grammars the check is exact (copies are language-equivalent iff bisimilar); for non-unifilar
             grammars it is only sufficient. Cannot be combined with
             `target_complexity`. Defaults to False.
         **synthesis_kwargs
@@ -385,11 +385,18 @@ class ArtificialGrammar(SymbolicSequencer):
         Raises
         ------
         ValueError
-            If `restricted` or `reject_equivalent_copies` is True and `target_complexity` is given, if `graph_init` is
-            not ``"tree"`` or ``"cycle"``, or if ``restricted=True`` is combined with ``graph_init="cycle"``.
+            If `enforce_unifilarity` or `reject_equivalent_copies` is True and `target_complexity` is given, if `graph_init` is
+            not ``"tree"`` or ``"cycle"``, or if ``enforce_unifilarity=True`` is combined with ``graph_init="cycle"``.
         """
-        if restricted and target_complexity is not None:
-            raise ValueError("restricted=True is not supported together with target_complexity (it would be ignored).")
+        legacy_aliases = {name for name in ("unifilar", "restricted") if name in synthesis_kwargs}
+        if legacy_aliases:
+            joined = ", ".join(sorted(legacy_aliases))
+            raise TypeError(
+                f"Legacy keyword argument(s) {joined} are no longer supported; use enforce_unifilarity instead."
+            )
+
+        if enforce_unifilarity and target_complexity is not None:
+            raise ValueError("enforce_unifilarity=True is not supported together with target_complexity (it would be ignored).")
         if reject_equivalent_copies and target_complexity is not None:
             raise ValueError(
                 "reject_equivalent_copies=True is not supported together with target_complexity (it would be ignored)."
@@ -410,7 +417,7 @@ class ArtificialGrammar(SymbolicSequencer):
                 rng=rng,
                 seed=seed,
                 verbose=verbose,
-                restricted=restricted,
+                enforce_unifilarity=enforce_unifilarity,
                 graph_init=graph_init,
                 reject_equivalent_copies=reject_equivalent_copies,
             )

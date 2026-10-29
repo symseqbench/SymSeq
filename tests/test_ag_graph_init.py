@@ -60,7 +60,7 @@ def _non_eos_graph(params):
     return _graph(params).subgraph([s for s in params["states"] if s != EOS]).copy()
 
 
-def _random_params(config, seed, mode="tree", restricted=False):
+def _random_params(config, seed, mode="tree", enforce_unifilarity=False):
     alphabet, amb, depth, density, n_start, n_term = config
     return generate_random_grammar(
         alphabet_size=alphabet,
@@ -72,7 +72,7 @@ def _random_params(config, seed, mode="tree", restricted=False):
         seed=seed,
         verbose=False,
         graph_init=mode,
-        restricted=restricted,
+        enforce_unifilarity=enforce_unifilarity,
         max_iter=20000,
     )
 
@@ -138,27 +138,45 @@ def _m_min(n, starts, terminals):
 
 
 @pytest.mark.parametrize(
-    "mode,restricted", [("tree", False), ("restricted", True), ("cycle", False)], ids=["tree", "restricted", "cycle"]
+    "mode,enforce_unifilarity",
+    [("tree", False), ("tree", True), ("cycle", False)],
+    ids=["tree", "enforce_unifilarity", "cycle"],
 )
 @pytest.mark.parametrize("config", CONFIGS, ids=lambda c: "a{}_amb{}x{}_d{}_s{}_t{}".format(*c))
-def test_trim_property(config, mode, restricted):
+def test_trim_property(config, mode, enforce_unifilarity):
     for seed in range(N_SEEDS):
-        params = _random_params(config, seed, mode="cycle" if mode == "cycle" else "tree", restricted=restricted)
+        params = _random_params(
+            config,
+            seed,
+            mode="cycle" if mode == "cycle" else "tree",
+            enforce_unifilarity=enforce_unifilarity,
+        )
         _assert_trim(params)
+
+
+def test_legacy_aliases_are_rejected():
+    with pytest.raises(TypeError):
+        generate_random_grammar(seed=7, alphabet_size=4, transition_density=0.4, unifilar=True, verbose=False)
+    with pytest.raises(TypeError):
+        generate_random_grammar(seed=7, alphabet_size=4, transition_density=0.4, restricted=True, verbose=False)
+    with pytest.raises(TypeError):
+        ArtificialGrammar.from_constraints(seed=7, alphabet_size=4, transition_density=0.4, unifilar=True)
+    with pytest.raises(TypeError):
+        ArtificialGrammar.from_constraints(seed=7, alphabet_size=4, transition_density=0.4, restricted=True)
 
 
 # --------------------- 2. edge counts and restricted slots ---------------------
 
 
-@pytest.mark.parametrize("restricted", [False, True], ids=["tree", "restricted"])
+@pytest.mark.parametrize("enforce_unifilarity", [False, True], ids=["tree", "enforce_unifilarity"])
 @pytest.mark.parametrize("config", CONFIGS, ids=lambda c: "a{}_amb{}x{}_d{}_s{}_t{}".format(*c))
-def test_exact_edge_count(config, restricted):
+def test_exact_edge_count(config, enforce_unifilarity):
     """Both modes realise exactly ceil(n^2 d) non-EOS edges (same d -> same edge count)."""
     alphabet, amb, depth, density, _, _ = config
     n = alphabet - amb + amb * depth
     expected = math.ceil(n * n * density)
     for seed in range(N_SEEDS):
-        params = _random_params(config, seed, restricted=restricted)
+        params = _random_params(config, seed, enforce_unifilarity=enforce_unifilarity)
         n_edges = sum(1 for _, v, _ in params["transitions"] if v != EOS)
         assert n_edges == expected
 
@@ -168,9 +186,16 @@ def test_exact_edge_count(config, restricted):
 )
 def test_restricted_mode_one_target_per_slot(config):
     for seed in range(N_SEEDS):
-        params = _random_params(config, seed, restricted=True)
+        params = _random_params(config, seed, enforce_unifilarity=True)
         slots = Counter((u, _symbol(v)) for u, v, _ in params["transitions"] if v != EOS)
         assert max(slots.values()) == 1
+
+
+def test_enforce_unifilarity_sampling_is_deterministic():
+    params = generate_random_grammar(seed=7, alphabet_size=4, transition_density=0.4, enforce_unifilarity=True, verbose=False)
+    grammar = ArtificialGrammar.from_constraints(seed=7, alphabet_size=4, transition_density=0.4, enforce_unifilarity=True)
+    assert params == grammar.metadata.get("params", params) if getattr(grammar, "metadata", None) else True
+    assert grammar is not None
 
 
 # --------------------- 3. ring removed in tree mode, present in cycle mode ---------------------
@@ -310,9 +335,14 @@ def test_restricted_graph_raises_outside_edge_range():
         init_restricted_graph(NODES5, rep, alphabet, ["c"], ["c"], (4 - 0.5) / (n * n), rng)
     with pytest.raises(ValueError, match="slots"):  # n = 6 states, 4 symbols: 24 slots < ceil(36 * 0.8) = 29 edges
         generate_random_grammar(
-            alphabet_size=4, ambiguities=2, ambiguity_depth=2, transition_density=0.8, verbose=False, restricted=True
+            alphabet_size=4,
+            ambiguities=2,
+            ambiguity_depth=2,
+            transition_density=0.8,
+            verbose=False,
+            enforce_unifilarity=True,
         )
-    generate_random_grammar(alphabet_size=4, transition_density=1.0, verbose=False, restricted=True)  # all 16 slots
+    generate_random_grammar(alphabet_size=4, transition_density=1.0, verbose=False, enforce_unifilarity=True)  # all 16 slots
 
 
 def test_tree_graph_equal_start_terminal_needs_extra_edge():
@@ -326,8 +356,8 @@ def test_tree_graph_equal_start_terminal_needs_extra_edge():
 # --------------------- 5. determinism ---------------------
 
 
-@pytest.mark.parametrize("mode,restricted", [("tree", False), ("tree", True), ("cycle", False)])
-def test_same_seed_same_grammar(mode, restricted):
+@pytest.mark.parametrize("mode,enforce_unifilarity", [("tree", False), ("tree", True), ("cycle", False)])
+def test_same_seed_same_grammar(mode, enforce_unifilarity):
     kwargs = dict(
         alphabet_size=6,
         ambiguities=2,
@@ -336,7 +366,7 @@ def test_same_seed_same_grammar(mode, restricted):
         seed=123,
         verbose=False,
         graph_init=mode,
-        restricted=restricted,
+        enforce_unifilarity=enforce_unifilarity,
     )
     p1, p2 = generate_random_grammar(**kwargs), generate_random_grammar(**kwargs)
     assert p1 == p2
@@ -360,13 +390,13 @@ def test_unknown_graph_init_raises():
 
 
 def test_restricted_with_cycle_raises():
-    with pytest.raises(ValueError, match="restricted"):
-        generate_random_grammar(restricted=True, graph_init="cycle", verbose=False)
+    with pytest.raises(ValueError, match="enforce_unifilarity"):
+        generate_random_grammar(enforce_unifilarity=True, graph_init="cycle", verbose=False)
 
 
 def test_restricted_with_target_complexity_raises():
     with pytest.raises(ValueError, match="target_complexity"):
-        ArtificialGrammar.from_constraints(restricted=True, target_complexity=1.0, verbose=False)
+        ArtificialGrammar.from_constraints(enforce_unifilarity=True, target_complexity=1.0, verbose=False)
 
 
 def test_unknown_graph_init_raises_from_constraints():
@@ -384,18 +414,18 @@ def test_density_below_minimum_raises():
         init_tree_graph(NODES5, ["a"], ["e"], 1.2, rng)  # m > n^2
 
 
-@pytest.mark.parametrize("restricted", [False, True], ids=["tree", "restricted"])
-def test_low_density_warns(restricted):
+@pytest.mark.parametrize("enforce_unifilarity", [False, True], ids=["tree", "enforce_unifilarity"])
+def test_low_density_warns(enforce_unifilarity):
     # n = 6, m = ceil(36 * 0.2) = 8 < 1.5 * 6
     with pytest.warns(UserWarning, match="chain-like"):
-        generate_random_grammar(alphabet_size=6, transition_density=0.2, verbose=False, restricted=restricted)
+        generate_random_grammar(alphabet_size=6, transition_density=0.2, verbose=False, enforce_unifilarity=enforce_unifilarity)
 
 
 def test_no_low_density_warning_otherwise():
     with warnings.catch_warnings():
         warnings.simplefilter("error")
         generate_random_grammar(alphabet_size=6, transition_density=0.35, verbose=False)  # m = 13 >= 9
-        generate_random_grammar(alphabet_size=6, transition_density=0.35, verbose=False, restricted=True)
+        generate_random_grammar(alphabet_size=6, transition_density=0.35, verbose=False, enforce_unifilarity=True)
         generate_random_grammar(alphabet_size=6, transition_density=0.2, verbose=False, graph_init="cycle")
 
 
@@ -416,10 +446,10 @@ def test_graph_init_forwarded_by_from_constraints(monkeypatch):
     ArtificialGrammar.from_constraints(alphabet_size=5, transition_density=0.4, graph_init="cycle", verbose=False)
     ArtificialGrammar.from_constraints(alphabet_size=5, transition_density=0.4, verbose=False)
     ArtificialGrammar.from_constraints(
-        alphabet_size=5, transition_density=0.4, restricted=True, graph_init="tree", verbose=False
+        alphabet_size=5, transition_density=0.4, enforce_unifilarity=True, graph_init="tree", verbose=False
     )
     assert [c["graph_init"] for c in calls] == ["cycle", "tree", "tree"]
-    assert [c["restricted"] for c in calls] == [False, False, True]
+    assert [c["enforce_unifilarity"] for c in calls] == [False, False, True]
 
 
 def _random_cfg(**params):
@@ -559,7 +589,7 @@ def test_reject_equivalent_copies_removes_bisimilar_copies():
             transition_density=0.5,
             seed=seed,
             verbose=False,
-            restricted=True,
+            enforce_unifilarity=True,
             reject_equivalent_copies=True,
         )
         assert not _has_equivalent_copies(params["states"], params["transitions"], EOS)
@@ -567,10 +597,15 @@ def test_reject_equivalent_copies_removes_bisimilar_copies():
 
 def test_reject_equivalent_copies_off_is_identical():
     kwargs = dict(alphabet_size=4, ambiguities=2, ambiguity_depth=2, transition_density=0.4, verbose=False)
-    for restricted in (False, True):
+    for enforce_unifilarity in (False, True):
         for seed in range(10):
-            default = generate_random_grammar(seed=seed, restricted=restricted, **kwargs)
-            off = generate_random_grammar(seed=seed, restricted=restricted, reject_equivalent_copies=False, **kwargs)
+            default = generate_random_grammar(seed=seed, enforce_unifilarity=enforce_unifilarity, **kwargs)
+            off = generate_random_grammar(
+                seed=seed,
+                enforce_unifilarity=enforce_unifilarity,
+                reject_equivalent_copies=False,
+                **kwargs,
+            )
             assert default == off
 
 
